@@ -1,0 +1,2 @@
+include README* requirements* LICENSE*
+recursive-include msticpy *
