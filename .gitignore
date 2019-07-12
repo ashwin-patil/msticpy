@@ -89,6 +89,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.msticpydbupdate
+Pipfile
 
 # Spyder project settings
 .spyderproject
@@ -105,3 +107,4 @@ venv.bak/
 /msticpy.code-workspace
 /docs/source/_build/**
 **/.vscode*
+.vscode
