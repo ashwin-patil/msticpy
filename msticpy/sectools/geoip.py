@@ -361,7 +361,7 @@ class GeoLiteLookup(GeoIpLookup):
                         print("{} folder will be used to search/download GeoLite DB files".format(_db_folder))
                     elif cmd =='n':
                         print('Current folder will be used to search/download GeoLite DB files')
-                        _db_folder = os.path.dirname(site.__file__)+"/site-packages/msticpy"
+                        _db_folder = os.path.join(os.path.dirname(site.__file__),"site-packages","msticpy")
                     break
                     
         _list_of_db_paths = glob.glob(_db_folder + '/*/*.mmdb')
