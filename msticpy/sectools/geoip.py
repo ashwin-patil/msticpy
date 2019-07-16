@@ -363,7 +363,7 @@ class GeoLiteLookup(GeoIpLookup):
         if db_folder is None:
             db_folder = self._PKG_DIR
         force_update = self._force_update
-        _list_of_db_paths = glob.glob(_db_folder + "/*.mmdb")
+        _list_of_db_paths = glob.glob(db_folder + "/*.mmdb")
 
         if _list_of_db_paths:
             _latest_db_path = max(_list_of_db_paths, key=os.path.getmtime)
@@ -384,7 +384,7 @@ class GeoLiteLookup(GeoIpLookup):
         else:
             print("No Maxmind City DB found. Downloading new DB ...")
             self.download_and_extract_gzip(self._MAXMIND_DOWNLOAD,db_folder)
-            _list_of_db_paths = glob.glob(_db_folder + "/*.mmdb")
+            _list_of_db_paths = glob.glob(db_folder + "/*.mmdb")
             _latest_db_path = _list_of_db_paths[0]
 
         return _latest_db_path
