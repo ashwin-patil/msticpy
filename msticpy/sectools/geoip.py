@@ -368,6 +368,7 @@ class GeoLiteLookup(GeoIpLookup):
             # Check for out of date DB file with latest available
             reader = geoip2.database.Reader(_latest_db_path)
             _last_mod_time = datetime.utcfromtimestamp(reader.metadata().build_epoch)
+            _db_age = datetime.utcnow() - _last_mod_time
             if _db_age > timedelta(30):
                 print("Latest DB is older than 30 days. Downloading new archive ...")
                 self.download_and_extract_gzip(self._MAXMIND_DOWNLOAD, self._PKG_DIR)
