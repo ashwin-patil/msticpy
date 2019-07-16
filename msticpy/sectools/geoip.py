@@ -300,19 +300,27 @@ class GeoLiteLookup(GeoIpLookup):
     _DB_ARCHIVE = "GeoLite2-City.mmdb.gz"
     _DB_FILE = "GeoLite2-City.mmdb"
 
-    def download_and_extract_gzip(self, url:str = self._MAXMIND_DOWNLOAD , db_folder: str = self._PKG_DIR):
+    def download_and_extract_gzip(self, url:str = None, db_folder: str = None):
         """Helper function to download file from the given URL and extract if it is archive
 
         Parameters
         ----------
         url : str
-            Web URL location to the Maxmind city Database.
+            Web URL location to the Maxmind city Database. (the default is None)
         db_folder: str, optional
             Provide absolute path to the folder containing MMDB file (e.g. '/usr/home' or 'C:\maxmind'). 
-            If no path provided, it is set to download msticpy package installation directory.
+            If no path provided, it is set to download msticpy package installation directory.(the default is None)
         """
+
+        if url is None:
+            url = self._MAXMIND_DOWNLOAD
+       
+        if db_folder is None:
+            db_folder = self._PKG_DIR
+
         _DB_ARCHIVE_PATH = os.path.join(db_folder, self._DB_ARCHIVE)
         _DB_FILE_PATH = os.path.join(db_folder, self._DB_FILE)
+
         try:
             response = requests.get(url, stream=True)
             response.raise_for_status()
@@ -335,13 +343,13 @@ class GeoLiteLookup(GeoIpLookup):
             except IOError as err:
                 print(f"{_DB_ARCHIVE_PATH} {err}")
 
-    def get_geolite_dbpath(self, db_folder: str = self._PKG_DIR, force_update: bool = False) -> str:
+    def get_geolite_dbpath(self, db_folder: str = None, force_update: bool = False) -> str:
         """ get the correct path containing GeoLite City Database
 
         Parameters
         ----------
         db_folder: str, optional
-            Provide absolute path to the folder containing MMDB file (e.g. '/usr/home' or 'C:\maxmind'). 
+            Provide absolute path to the folder containing MMDB file (e.g. '/usr/home' or 'C:\maxmind').  
             If no path provided, it is set to download msticpy package installation directory.
         force_update : bool, optional
             Force update can be set to true or false. depending on it, new download request will be initiated.
@@ -352,8 +360,9 @@ class GeoLiteLookup(GeoIpLookup):
             Returns the absoulte path of local maxmind geolite city database after control flow logic.
 
         """
-        self._db_folder = db_folder
-        self._force_update = force_update
+        if db_folder is None:
+            db_folder = self._PKG_DIR
+        force_update = self._force_update
         _list_of_db_paths = glob.glob(self._db_folder + "/*.mmdb")
 
         if _list_of_db_paths:
@@ -366,21 +375,21 @@ class GeoLiteLookup(GeoIpLookup):
             _db_age = datetime.utcnow() - _last_mod_time
             if _db_age > timedelta(30):
                 print("Latest maxmind db present is older than 30 days. Downloading new archive ...")
-                self.download_and_extract_gzip(self._MAXMIND_DOWNLOAD,self._db_folder)  
+                self.download_and_extract_gzip(self._MAXMIND_DOWNLOAD,db_folder)  
             else:
-                if self._force_update:
-                        self.download_and_extract_gzip(self._MAXMIND_DOWNLOAD,self._db_folder)                       
+                if force_update:
+                        self.download_and_extract_gzip(self._MAXMIND_DOWNLOAD,db_folder)                       
                 else:
                         print("Existing maxmind db is downloaded in last 30 days so it will be used")
         else:
             print("No Maxmind City DB found. Downloading new DB ...")
-            self.download_and_extract_gzip(self._MAXMIND_DOWNLOAD,self.db_folder)
-            _list_of_db_paths = glob.glob(self._db_folder + "/*.mmdb")
+            self.download_and_extract_gzip(self._MAXMIND_DOWNLOAD,db_folder)
+            _list_of_db_paths = glob.glob(_db_folder + "/*.mmdb")
             _latest_db_path = _list_of_db_paths[0]
 
         return _latest_db_path
 
-    def __init__(self, db_folder: str = self._PKG_DIR, force_update: bool = False):
+    def __init__(self, db_folder: str = None, force_update: bool = False):
         """Return new instance of GeoLiteLookup class.
         
         Parameters
@@ -392,9 +401,10 @@ class GeoLiteLookup(GeoIpLookup):
             Force update can be set to true or false. depending on it, new download request will be initiated.
 
         """
-        self._db_folder = db_folder
+        if db_folder is None:
+            db_folder = self._PKG_DIR      
         self._force_update = force_update
-        self._dbpath = self.get_geolite_dbpath(self._db_folder, self._force_update)
+        self._dbpath = self.get_geolite_dbpath(db_folder, self._force_update)
         self._reader = geoip2.database.Reader(self._dbpath)
 
     def lookup_ip(
