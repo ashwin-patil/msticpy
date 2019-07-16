@@ -310,8 +310,8 @@ class GeoLiteLookup(GeoIpLookup):
         folder: str
             full absolute path to save maxmind city db archive and db file
         """
-        _DB_ARCHIVE_PATH = os.path.join(folder, _DB_ARCHIVE)
-        _DB_PATH = os.path.join(folder, _DB_FILE)
+        _DB_ARCHIVE_PATH = os.path.join(folder, self._DB_ARCHIVE)
+        _DB_PATH = os.path.join(folder, self._DB_FILE)
         try:
             response = requests.get(url, stream=True)
             response.raise_for_status()
@@ -321,7 +321,7 @@ class GeoLiteLookup(GeoIpLookup):
             print(f"Other error occurred: {err}")
         else:
             print("Downloading GeoLite DB archive from MaxMind.....")
-            with open(self._DB_ARCHIVE_PATH, "wb") as fd:
+            with open(_DB_ARCHIVE_PATH, "wb") as fd:
                 print("Saving Downloaded archive.....")
                 for chunk in response.iter_content(chunk_size=10000):
                     fd.write(chunk)
