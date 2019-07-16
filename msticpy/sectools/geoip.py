@@ -372,7 +372,6 @@ class GeoLiteLookup(GeoIpLookup):
                         self.download_and_extract_gzip(self._MAXMIND_DOWNLOAD,self._db_folder)                       
                 else:
                         print("Existing maxmind db is downloaded in last 30 days so it will be used")
-                break
         else:
             print("No Maxmind City DB found. Downloading new DB ...")
             self.download_and_extract_gzip(self._MAXMIND_DOWNLOAD,self.db_folder)
