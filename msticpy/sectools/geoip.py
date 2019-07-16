@@ -300,7 +300,7 @@ class GeoLiteLookup(GeoIpLookup):
     _DB_ARCHIVE = "GeoLite2-City.mmdb.gz"
     _DB_FILE = "GeoLite2-City.mmdb"
 
-    def download_and_extract_gzip(self, url:str = None, db_folder: str = None):
+    def download_and_extract_gzip(self, url: str = None, db_folder: str = None):
         """Helper function to download file from the given URL and extract if it is archive
 
         Parameters
@@ -314,7 +314,7 @@ class GeoLiteLookup(GeoIpLookup):
 
         if url is None:
             url = self._MAXMIND_DOWNLOAD
-       
+
         if db_folder is None:
             db_folder = self._PKG_DIR
 
@@ -329,21 +329,25 @@ class GeoLiteLookup(GeoIpLookup):
         except Exception as err:
             print(f"Other error occurred: {err}")
         else:
-            print("Downloading GeoLite DB archive from MaxMind.....")
+            print("Downloading GeoLite DB archive from MaxMind....")
             with open(_DB_ARCHIVE_PATH, "wb") as fd:
-                print("Saving Downloaded archive.....")
+                print(f"Downloaded archive location :: {_DB_ARCHIVE_PATH}")
                 for chunk in response.iter_content(chunk_size=10000):
                     fd.write(chunk)
             try:
                 with gzip.open(_DB_ARCHIVE_PATH, "rb") as f_in:
-                    print(f"Extracting city database to {_DB_FILE_PATH}")
+                    print(f"Extracting city database...")
                     with open(_DB_FILE_PATH, "wb") as f_out:
                         shutil.copyfileobj(f_in, f_out)
-                        print("Extraction complete.....")
+                        print(
+                            f"Extraction complete. Local Maxmind city DB:: {_DB_FILE_PATH}"
+                        )
             except IOError as err:
                 print(f"{_DB_ARCHIVE_PATH} {err}")
 
-    def get_geolite_dbpath(self, db_folder: str = None, force_update: bool = False) -> str:
+    def get_geolite_dbpath(
+        self, db_folder: str = None, force_update: bool = False
+    ) -> str:
         """ get the correct path containing GeoLite City Database
 
         Parameters
@@ -367,23 +371,32 @@ class GeoLiteLookup(GeoIpLookup):
 
         if _list_of_db_paths:
             _latest_db_path = max(_list_of_db_paths, key=os.path.getmtime)
-            print("Maxmind DB already present. Check for out of date DB file")
+            print(f"Local Maxmind City Database already present in {db_folder}")
             # Check for out of date DB file with latest available
             reader = geoip2.database.Reader(_latest_db_path)
             # Retrive date of maxind city database accessing build_epoch property of reader object.
             _last_mod_time = datetime.utcfromtimestamp(reader.metadata().build_epoch)
             _db_age = datetime.utcnow() - _last_mod_time
             if _db_age > timedelta(30):
-                print("Latest maxmind db present is older than 30 days. Downloading new archive ...")
-                self.download_and_extract_gzip(self._MAXMIND_DOWNLOAD,db_folder)  
+                print(
+                    f"Latest local Maxmind City Database present is older than 30 days. Downloading new database to {db_folder}"
+                )
+                self.download_and_extract_gzip(self._MAXMIND_DOWNLOAD, db_folder)
             else:
                 if force_update:
-                        self.download_and_extract_gzip(self._MAXMIND_DOWNLOAD,db_folder)                       
+                    print(
+                        f"Force update is set to True. Downloading new database to {db_folder}"
+                    )
+                    self.download_and_extract_gzip(self._MAXMIND_DOWNLOAD, db_folder)
                 else:
-                        print("Existing maxmind db is downloaded in last 30 days so it will be used")
+                    print(
+                        "Existing local Maxmind City Database is downloaded in last 30 days so it will be used"
+                    )
         else:
-            print("No Maxmind City DB found. Downloading new DB ...")
-            self.download_and_extract_gzip(self._MAXMIND_DOWNLOAD,db_folder)
+            print(
+                "No local Maxmind City Database found. Downloading new database to {db_folder}"
+            )
+            self.download_and_extract_gzip(self._MAXMIND_DOWNLOAD, db_folder)
             _list_of_db_paths = glob.glob(db_folder + "/*.mmdb")
             _latest_db_path = _list_of_db_paths[0]
 
@@ -402,7 +415,7 @@ class GeoLiteLookup(GeoIpLookup):
 
         """
         if db_folder is None:
-            db_folder = self._PKG_DIR      
+            db_folder = self._PKG_DIR
         self._force_update = force_update
         self._dbpath = self.get_geolite_dbpath(db_folder, self._force_update)
         self._reader = geoip2.database.Reader(self._dbpath)
