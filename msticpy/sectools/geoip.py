@@ -455,7 +455,7 @@ class GeoLiteLookup(GeoIpLookup):
         output_raw = []
         output_entities = []
         for ip_input in ip_list:
-            geo_match = self._reader.get(ip_input)
+            geo_match = self._reader.city(ip_input).raw
             if geo_match:
                 output_raw.append(geo_match)
                 output_entities.append(
