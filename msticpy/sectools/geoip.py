@@ -317,7 +317,7 @@ class GeoLiteLookup(GeoIpLookup):
         if db_folder is None:
             db_folder = self._PKG_DIR
         self._force_update = force_update
-        self._auto_update == auto_update
+        self._auto_update = auto_update
         self._check_and_update_db(db_folder, self._force_update, self._auto_update)
         self._dbpath = self.get_geoip_dbpath(db_folder)
         self._reader = geoip2.database.Reader(self._dbpath)
