@@ -412,7 +412,7 @@ class GeoLiteLookup(GeoIpLookup):
             Auto update can be set to true or false. depending on it, new download request will be initiated if age criteria is matched.
 
         """           
-        geoip_db_path = get_geoip_dbpath(db_folder)
+        geoip_db_path = self.get_geoip_dbpath(db_folder)
 
         if geoip_db_path is None:
             print(
