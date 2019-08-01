@@ -387,7 +387,7 @@ class GeoLiteLookup(GeoIpLookup):
 
         if len(list_of_db_paths) > 1:
             latest_db_path = max(list_of_db_paths, key=os.path.getmtime)
-        elif list_of_db_paths == 1:
+        elif len(list_of_db_paths) == 1:
             latest_db_path = list_of_db_paths[0]
         else:
             latest_db_path = None
