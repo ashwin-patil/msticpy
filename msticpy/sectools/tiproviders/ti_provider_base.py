@@ -14,15 +14,15 @@ requests per minute for the account type that you have.
 """
 import abc
 from abc import ABC
-import math
+from enum import Enum
+import math  # noqa
+import pprint
 import re
 from collections import Counter, namedtuple
 
-from functools import singledispatch
+from functools import singledispatch, lru_cache
 from ipaddress import IPv4Address, IPv6Address, ip_address
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
-import socket
-from socket import gaierror
 
 import attr
 import pandas as pd
@@ -41,38 +41,122 @@ SanitizedObservable = namedtuple("SanitizedObservable", ["observable", "status"]
 
 
 # pylint: disable=too-few-public-methods
+class TISeverity(Enum):
+    """Threat intelligence report severity."""
+
+    unknown = -1
+    information = 0
+    warning = 1
+    high = 2
+
+
+# pylint: disable=too-many-instance-attributes
 @attr.s(auto_attribs=True)
 class LookupResult:
     """Lookup result for IoCs."""
 
     ioc: str
     ioc_type: str
-    query_subtype: str = None
+    query_subtype: Optional[str] = None
+    provider: Optional[str] = None
     result: bool = False
+    severity: int = attr.ib(default=0)
     details: Any = None
-    raw_result: Optional[str] = None
+    raw_result: Optional[Union[str, dict]] = None
     reference: Optional[str] = None
     status: int = 0
 
+    @severity.validator
+    def _check_severity(self, attribute, value):
+        del attribute
+        if isinstance(value, TISeverity):
+            self.severity = value.value
+        elif isinstance(value, str) and value.lower() in TISeverity.__members__:
+            self.severity = TISeverity[value.lower()].value
+        elif isinstance(value, int) and 0 <= value <= 2:
+            self.severity = TISeverity(value).value
+        else:
+            self.severity = TISeverity.information.value
 
-# Mapping for DataFrame columns
-_DF_COLUMNS_MAP: Dict[str, str] = {
-    "ioc": "Ioc",
-    "ioc_type": "IocType",
-    "query_subtype": "QuerySubtype",
-    "result": "Result",
-    "details": "Details",
-    "raw_result": "RawResult",
-    "reference": "Reference",
-    "status": "Status",
-}
+    @property
+    def summary(self):
+        """Print a summary of the Lookup Result."""
+        p_pr = pprint.PrettyPrinter(indent=4)
+        print("ioc:", self.ioc, "(", self.ioc_type, ")")
+        print("result:", self.result)
+        # print("severity:", self.severity)
+        p_pr.pprint(self.details)
+        print("reference: ", self.reference)
+
+    @property
+    def raw_result_fmtd(self):
+        """Print raw results of the Lookup Result."""
+        p_pr = pprint.PrettyPrinter(indent=4)
+        p_pr.pprint(self.raw_result)
+
+    @property
+    def severity_name(self) -> str:
+        """
+        Return text description of severity score.
+
+        Returns
+        -------
+        str
+            Severity description.
+
+        """
+        try:
+            return TISeverity(self.severity).name
+        except ValueError:
+            return TISeverity.unknown.name
+
+    def set_severity(self, value: Any):
+        """
+        Set the severity from enum, int or string.
+
+        Parameters
+        ----------
+        value : Any
+            The severity value to set
+
+        """
+        self._check_severity(None, value)
+
+    @classmethod
+    def column_map(cls):
+        """Return a dictionary that maps fields to DF Names."""
+        col_mapping = {}
+        for name in attr.fields_dict(cls):
+            out_name = "".join([part.capitalize() for part in name.split("_")])
+            col_mapping[name] = out_name
+        return col_mapping
+
+
+# pylint: enable=too-many-instance-attributes
+
+
+# pylint: disable=too-few-public-methods
+class TILookupStatus(Enum):
+    """Threat intelligence lookup status."""
+
+    ok = 0
+    not_supported = 1
+    bad_format = 2
+    query_failed = 3
+    other = 10
+
+
+# pylint: enable=too-few-public-methods
+
+
+_IOC_EXTRACT = IoCExtract()
 
 
 @export
 class TIProvider(ABC):
     """Abstract base class for Threat Intel providers."""
 
-    _ioc_extract = IoCExtract()
+    _IOC_QUERIES: Dict[str, Any] = {}
 
     # pylint: disable=unused-argument
     def __init__(self, **kwargs):
@@ -80,9 +164,15 @@ class TIProvider(ABC):
         self._supported_types: Set[IoCType] = set()
         self.description: Optional[str] = None
 
+        self._supported_types = {
+            IoCType.parse(ioc_type.split("-")[0]) for ioc_type in self._IOC_QUERIES
+        }
+        if IoCType.unknown in self._supported_types:
+            self._supported_types.remove(IoCType.unknown)
+
     @abc.abstractmethod
     def lookup_ioc(
-        self, ioc: str, ioc_type: str = None, query_type: str = None
+        self, ioc: str, ioc_type: str = None, query_type: str = None, **kwargs
     ) -> LookupResult:
         """
         Lookup a single IoC observable.
@@ -111,6 +201,7 @@ class TIProvider(ABC):
         obs_col: str = None,
         ioc_type_col: str = None,
         query_type: str = None,
+        **kwargs,
     ) -> pd.DataFrame:
         """
         Lookup collection of IoC observables.
@@ -140,19 +231,17 @@ class TIProvider(ABC):
         """
         results = []
         for observable, ioc_type in generate_items(data, obs_col, ioc_type_col):
+            if not observable:
+                continue
             item_result = self.lookup_ioc(
                 ioc=observable, ioc_type=ioc_type, query_type=query_type
             )
             results.append(pd.Series(attr.asdict(item_result)))
 
-        return (
-            pd.DataFrame(data=results)
-            .rename(columns=_DF_COLUMNS_MAP)
-            .drop(columns=["status"])
-        )
+        return pd.DataFrame(data=results).rename(columns=LookupResult.column_map())
 
     @abc.abstractmethod
-    def parse_results(self, response: LookupResult) -> Tuple[bool, Any]:
+    def parse_results(self, response: LookupResult) -> Tuple[bool, TISeverity, Any]:
         """
         Return the details of the response.
 
@@ -163,8 +252,9 @@ class TIProvider(ABC):
 
         Returns
         -------
-        Tuple[bool, Any]
+        Tuple[bool, TISeverity, Any]
             bool = positive or negative hit
+            TISeverity = enumeration of severity
             Object with match details
 
         """
@@ -181,24 +271,6 @@ class TIProvider(ABC):
 
         """
         return [ioc.name for ioc in self._supported_types]
-
-    @classmethod
-    def resolve_ioc_type(cls, observable: str) -> str:
-        """
-        Return IoCType determined by IoCExtract.
-
-        Parameters
-        ----------
-        observable : str
-            IoC observable string
-
-        Returns
-        -------
-        str
-            IoC Type (or unknown if type could not be determined)
-
-        """
-        return cls._ioc_extract.get_ioc_type(observable)
 
     @classmethod
     def is_known_type(cls, ioc_type: str) -> bool:
@@ -219,9 +291,17 @@ class TIProvider(ABC):
         return ioc_type in IoCType.__members__ and ioc_type != "unknown"
 
     @classmethod
-    @abc.abstractmethod
     def usage(cls):
         """Print usage of provider."""
+        print(f"{cls.__doc__} Supported query types:")
+        for ioc_key in sorted(cls._IOC_QUERIES):
+            ioc_key_elems = ioc_key.split("-", maxsplit=1)
+            if len(ioc_key_elems) == 1:
+                print(f"\tioc_type={ioc_key_elems[0]}")
+            if len(ioc_key_elems) == 2:
+                print(
+                    f"\tioc_type={ioc_key_elems[0]}, ioc_query_type={ioc_key_elems[1]}"
+                )
 
     def is_supported_type(self, ioc_type: Union[str, IoCType]) -> bool:
         """
@@ -242,8 +322,71 @@ class TIProvider(ABC):
             ioc_type = IoCType.parse(ioc_type)
         return ioc_type.name in self.supported_types
 
+    @staticmethod
+    @lru_cache(maxsize=1024)
+    def resolve_ioc_type(observable: str) -> str:
+        """
+        Return IoCType determined by IoCExtract.
 
-_IOC_EXTRACT = IoCExtract()
+        Parameters
+        ----------
+        observable : str
+            IoC observable string
+
+        Returns
+        -------
+        str
+            IoC Type (or unknown if type could not be determined)
+
+        """
+        return _IOC_EXTRACT.get_ioc_type(observable)
+
+    def _check_ioc_type(
+        self, ioc: str, ioc_type: str = None, query_subtype: str = None
+    ) -> LookupResult:
+        """
+        Check IoC Type and cleans up observable.
+
+        Parameters
+        ----------
+        ioc : str
+            IoC observable
+        ioc_type : str, optional
+            IoC type, by default None
+        query_subtype : str, optional
+            Query sub-type, if any, by default None
+
+        Returns
+        -------
+        LookupResult
+            Lookup result with resolved ioc_type and pre-processed
+            observable.
+            LookupResult.status is none-zero on failure.
+
+        """
+        result = LookupResult(
+            ioc=ioc,
+            ioc_type=ioc_type if ioc_type else self.resolve_ioc_type(ioc),
+            query_subtype=query_subtype,
+            result=False,
+            details="",
+            raw_result=None,
+            reference=None,
+        )
+
+        if not self.is_supported_type(result.ioc_type):
+            result.details = f"IoC type {result.ioc_type} not supported."
+            result.status = TILookupStatus.not_supported.value
+            return result
+
+        clean_ioc = preprocess_observable(ioc, result.ioc_type)
+        if clean_ioc.status != "ok":
+            result.details = clean_ioc.status
+            result.status = TILookupStatus.bad_format.value
+
+        return result
+
+
 # slightly stricter than normal URL regex to exclude '() from host string
 _HTTP_STRICT_REGEX = r"""
     (?P<protocol>(https?|ftp|telnet|ldap|file)://)
@@ -380,7 +523,8 @@ def _clean_url(url: str) -> Optional[str]:
     # Try to clean URL and re-check
     match_url = _HTTP_STRICT_RGXC.search(url)
     if (
-        match_url.groupdict()["protocol"] is None
+        not match_url
+        or match_url.groupdict()["protocol"] is None
         or match_url.groupdict()["host"] is None
     ):
         return None
@@ -427,10 +571,6 @@ def _preprocess_dns(domain: str) -> SanitizedObservable:
         return SanitizedObservable(None, "Domain is an IP address")
     except ValueError:
         pass
-    try:
-        socket.gethostbyname(domain)
-    except gaierror:
-        return SanitizedObservable(None, "Domain not resolvable")
 
     return SanitizedObservable(domain, "ok")
 
@@ -457,7 +597,7 @@ def entropy(input_str: str) -> float:
 @singledispatch
 def generate_items(
     data: Any, obs_col: Optional[str] = None, ioc_type_col: Optional[str] = None
-) -> Tuple[str, str]:
+) -> Iterable[Tuple[Optional[str], Optional[str]]]:
     """
     Generate item pairs from different input types.
 
@@ -472,26 +612,29 @@ def generate_items(
 
     Returns
     -------
-    Tuple[str, str] - a tuple of Observable/Type.
+    Iterable[Tuple[Optional[str], Optional[str]]]] - a tuple of Observable/Type.
 
     """
     del obs_col, ioc_type_col
     if isinstance(data, Iterable):
         for item in data:
-            yield item, None
-    yield None, None
+            yield item, TIProvider.resolve_ioc_type(item)
+    else:
+        yield None, None
 
 
 @generate_items.register(pd.DataFrame)
 def _(data: pd.DataFrame, obs_col: str, ioc_type_col: Optional[str] = None):
     for _, row in data.iterrows():
         if ioc_type_col is None:
-            yield row[obs_col], None
+            yield row[obs_col], TIProvider.resolve_ioc_type(row[obs_col])
         else:
             yield row[obs_col], row[ioc_type_col]
 
 
-@generate_items.register(dict)  # noqa: F811
+@generate_items.register(dict)  # type: ignore
 def _(data: dict, obs_col: Optional[str] = None, ioc_type_col: Optional[str] = None):
     for obs, ioc_type in data.items():
+        if not ioc_type:
+            ioc_type = TIProvider.resolve_ioc_type(obs)
         yield obs, ioc_type

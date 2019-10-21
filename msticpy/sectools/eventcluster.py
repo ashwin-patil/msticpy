@@ -28,7 +28,10 @@ add_process_features: derives numerical features from text features such as
 commandline and process path.
 
 """
+from binascii import crc32
+from functools import lru_cache
 from math import log10, floor
+import re
 from typing import List, Any, Tuple, Union
 
 import numpy as np
@@ -185,30 +188,53 @@ def _merge_clustered_items(
         cluster_id = cluster_set[idx]
         class_members = labels == cluster_id
         if isinstance(data, pd.DataFrame):
-            last_event_time = data[class_members][-1:][time_column].iat[0]
+            time_ordered = data[class_members].sort_values(time_column, ascending=True)
+            first_event_time = time_ordered[0:][time_column].iat[0]
+            last_event_time = time_ordered[-1:][time_column].iat[0]
         else:
+            first_event_time = None
             last_event_time = None
 
         if cluster_id == -1:
             # 'Noise' events are individual items that could not be assigned
             # to a cluster and so are unique
             cluster_list.append(
-                data[class_members].assign(
+                data[class_members]
+                .assign(
                     Clustered=False,
                     ClusterId=cluster_id,
                     ClusterSize=1,
+                    TimeGenerated=first_event_time,
+                    FirstEventTime=first_event_time,
                     LastEventTime=last_event_time,
+                )
+                .astype(
+                    dtype={
+                        "TimeGenerated": "datetime64[ns]",
+                        "FirstEventTime": "datetime64[ns]",
+                        "LastEventTime": "datetime64[ns]",
+                    }
                 )
             )
         else:
             # Otherwise, just choose the first example of the cluster set
             cluster_list.append(
-                data[class_members].assign(
+                data[class_members]
+                .assign(
                     Clustered=True,
                     ClusterId=cluster_id,
                     ClusterSize=counts[idx],
+                    TimeGenerated=first_event_time,
+                    FirstEventTime=first_event_time,
                     LastEventTime=last_event_time,
                 )[0:1]
+                .astype(
+                    dtype={
+                        "TimeGenerated": "datetime64[ns]",
+                        "FirstEventTime": "datetime64[ns]",
+                        "LastEventTime": "datetime64[ns]",
+                    }
+                )
             )
     # pylint: enable=consider-using-enumerate
     return pd.concat(cluster_list)
@@ -279,7 +305,7 @@ def add_process_features(
         _add_processname_features(output_df, force, path_separator)
 
     if "CommandLine" in output_df:
-        _add_commandline_features(output_df, force, path_separator)
+        _add_commandline_features(output_df, force)
 
     if "SubjectLogonId" in output_df:
         if "isSystemSession" not in output_df or force:
@@ -306,31 +332,25 @@ def _add_processname_features(
         Path separator for OS
 
     """
-    if "processNameLen" not in output_df or force:
-        output_df["processNameLen"] = output_df.apply(
-            lambda x: len(x.NewProcessName), axis=1
-        )
-    if "processNameTokens" not in output_df or force:
-        output_df["processNameTokens"] = output_df.apply(
-            lambda x: len(x.NewProcessName.split(path_separator)), axis=1
-        )
     if "processName" not in output_df or force:
         output_df["processName"] = output_df.apply(
             lambda x: x.NewProcessName.split(path_separator)[-1], axis=1
         )
     if "pathScore" not in output_df or force:
         output_df["pathScore"] = output_df.apply(
-            lambda x: _string_score(x.NewProcessName), axis=1
+            lambda x: char_ord_score(x.NewProcessName), axis=1
         )
     if "pathLogScore" not in output_df or force:
         output_df["pathLogScore"] = output_df.apply(
             lambda x: log10(x.pathScore) if x.pathScore else 0, axis=1
         )
+    if "pathHash" not in output_df or force:
+        output_df["pathHash"] = output_df.apply(
+            lambda x: crc32_hash(x.NewProcessName), axis=1
+        )
 
 
-def _add_commandline_features(
-    output_df: pd.DataFrame, force: bool, path_separator: str
-):
+def _add_commandline_features(output_df: pd.DataFrame, force: bool):
     """
     Add commandline default features.
 
@@ -340,14 +360,8 @@ def _add_commandline_features(
         The dataframe to add features to
     force : bool
         If True overwrite existing feature columns
-    path_separator : str
-        Path separator for OS
 
     """
-    if "commandlineTokens" not in output_df or force:
-        output_df["commandlineTokens"] = output_df.apply(
-            lambda x: len(x.CommandLine.split(path_separator)), axis=1
-        )
     if "commandlineLen" not in output_df or force:
         output_df["commandlineLen"] = output_df.apply(
             lambda x: len(x.CommandLine), axis=1
@@ -357,36 +371,32 @@ def _add_commandline_features(
             lambda x: log10(x.commandlineLen) if x.commandlineLen else 0, axis=1
         )
     if "commandlineTokensFull" not in output_df or force:
-        delim_rgx = r'[\s\-\\/\.,"\'|&:;%$()]'
         output_df["commandlineTokensFull"] = output_df[["CommandLine"]].apply(
-            lambda x: x.str.count(delim_rgx), axis=1
+            lambda x: delim_count(x.CommandLine), axis=1
         )
 
     if "commandlineScore" not in output_df or force:
         output_df["commandlineScore"] = output_df.apply(
-            lambda x: _string_score(x.CommandLine), axis=1
+            lambda x: char_ord_score(x.CommandLine), axis=1
         )
-    if "commandlineLogScore" not in output_df or force:
-        output_df["commandlineLogScore"] = output_df.apply(
-            lambda x: log10(x.commandlineScore) if x.commandlineScore else 0, axis=1
+    if "commandlineTokensHash" not in output_df or force:
+        output_df["commandlineTokensHash"] = output_df.apply(
+            lambda x: delim_hash(x.CommandLine), axis=1
         )
 
 
 @export
-def delim_count(
-    input_row: pd.Series, column: str, delim_list: str = r'[\s\-\\/\.,"\'|&:;%$()]'
-) -> int:
+@lru_cache(maxsize=1024)
+def delim_count(value: str, delim_list: str = r'[\s\-\\/\.,"\'|&:;%$()]') -> int:
     r"""
     Count the delimiters in input column.
 
     Parameters
     ----------
-    input_row : pd.Series
-        The series to process
-    column : str
-        The name of the column to process
+    value : str
+        Data to process
     delim_list : str, optional
-        delimiters to use. (the default is r'[\\s\-\\/\.,"\'\|&:;%$()]')
+        delimiters to use. (the default is r'[\\s\\\\-\\\\\\\\/\.,"\\\\'|&:;%$()]')
 
     Returns
     -------
@@ -394,20 +404,41 @@ def delim_count(
         Count of delimiters in the string.
 
     """
-    return input_row.str.count(delim_list)[column]
+    return len(re.findall(delim_list, value))
 
 
 @export
-def char_ord_score(input_row: pd.Series, column: str, scale: int = 1) -> int:
+@lru_cache(maxsize=1024)
+def delim_hash(value: str, delim_list: str = r'[\s\-\\/\.,"\'|&:;%$()]') -> int:
+    r"""
+    Return a hash (CRC32) of the delimiters from input column.
+
+    Parameters
+    ----------
+    value : str
+        Data to process
+    delim_list : str, optional
+        delimiters to use. (the default is r'[\\s\\\\-\\\\\\\\/\.,"\\\\'|&:;%$()]')
+
+    Returns
+    -------
+    int
+        Hash of delimiter set in the string.
+
+    """
+    return crc32(bytes("".join(re.findall(delim_list, value)), "utf-8"))
+
+
+@export
+@lru_cache(maxsize=1024)
+def char_ord_score(value: str, scale: int = 1) -> int:
     """
     Return sum of ord values of characters in string.
 
     Parameters
     ----------
-    input_row : pd.Series
-        The series to process
-    column : str
-        Column name to process
+    value : str
+        Data to process
     scale : int, optional
         reduce the scale of the feature (reducing the
         influence of variations this feature on the clustering
@@ -430,20 +461,19 @@ def char_ord_score(input_row: pd.Series, column: str, scale: int = 1) -> int:
     algorithms.
 
     """
-    return floor(sum([ord(x) for x in input_row[column]]) / scale)
+    return floor(sum([ord(x) for x in value]) / scale)
 
 
 @export
-def token_count(input_row: pd.Series, column: str, delimiter: str = " ") -> int:
+@lru_cache(maxsize=1024)
+def token_count(value: str, delimiter: str = " ") -> int:
     """
     Return count of delimiter-separated tokens pd.Series column.
 
     Parameters
     ----------
-    input_row : pd.Series
-        The series to process
-    column : str
-        Column name to process
+    value : str
+        Data to process
     delimiter : str, optional
         Delimiter used to split the column string.
         (the default is ' ')
@@ -454,12 +484,32 @@ def token_count(input_row: pd.Series, column: str, delimiter: str = " ") -> int:
         count of tokens
 
     """
-    return len(input_row[column].split(delimiter))
+    return len(value.split(delimiter))
 
 
 def _string_score(input_str):
     """Sum the ord(c) for characters in a string."""
     return sum([ord(x) for x in input_str])
+
+
+@export
+@lru_cache(maxsize=1024)
+def crc32_hash(value: str) -> int:
+    """
+    Return the CRC32 hash of the input column.
+
+    Parameters
+    ----------
+    value : str
+        Data to process
+
+    Returns
+    -------
+    int
+        CRC32 hash
+
+    """
+    return crc32(bytes(value.encode("utf-8")))
 
 
 def delim_count_df(
@@ -475,7 +525,7 @@ def delim_count_df(
     column : str
         The name of the column to process
     delim_list : str, optional
-        delimiters to use. (the default is r'[\s\-\\/\.,"\'|&:;%$()]')
+        delimiters to use. (the default is r\'[\\s\\\\-\\\\\\\\/\.,"\\\\'|&:;%$()]\')
 
     Returns
     -------
@@ -543,6 +593,26 @@ def token_count_df(data: pd.DataFrame, column: str, delimiter: str = " ") -> pd.
 
     """
     return data.apply(lambda x: len(x[column].split(delimiter)), axis=1)
+
+
+def crc32_hash_df(data: pd.DataFrame, column: str) -> pd.Series:
+    """
+    Return the CRC32 hash of the input column.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        The DataFrame to process
+    column : str
+        Column name to process
+
+    Returns
+    -------
+    pd.Series
+        CRC32 hash of input column
+
+    """
+    return data.apply(lambda x: crc32(bytes(x[column].encode("utf-8"))), axis=1)
 
 
 # pylint: disable=too-many-arguments, too-many-statements

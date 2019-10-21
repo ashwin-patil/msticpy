@@ -13,7 +13,8 @@ requests per minute for the account type that you have.
 
 """
 from collections import ChainMap
-import sys
+from inspect import isclass
+import sys  # noqa
 from typing import List, Mapping, Dict, Tuple, Union, Iterable, Optional
 import warnings
 
@@ -23,14 +24,23 @@ import pandas as pd
 # used in dynamic instantiation of providers
 # pylint: disable=unused-wildcard-import, wildcard-import
 
+from . import tiproviders
 from .tiproviders import *  # noqa:F401, F403
-from .tiproviders.ti_provider_base import TIProvider, LookupResult
+from .tiproviders.ti_provider_base import TIProvider, LookupResult, TILookupStatus
 from .tiproviders.ti_provider_settings import get_provider_settings, reload_settings
 from ..nbtools.utility import export
 from .._version import VERSION
 
 __version__ = VERSION
 __author__ = "Ian Hellen"
+
+
+_NO_PROVIDERS_MSSG = """
+No TI Providers are loaded - please check that
+you have correctly configured your msticpyconfig.yaml settings.
+For more information see
+https://msticpy.readthedocs.io/en/latest/TIProviders.html
+"""
 
 
 @export
@@ -78,7 +88,7 @@ class TILookup:
             [description]
 
         """
-        return self._all_providers
+        return self._all_providers  # type: ignore
 
     @property
     def provider_status(self) -> Iterable[str]:
@@ -100,6 +110,46 @@ class TILookup:
             for prov_name, prov in self._secondary_providers.items()
         ]
         return prim + sec
+
+    @property
+    def available_providers(self) -> List[str]:
+        """
+        Return a list of builtin providers.
+
+        Returns
+        -------
+        List[str]
+            List of TI Provider classes.
+
+        """
+        providers = []
+        for provider_name in dir(tiproviders):
+            provider_class = getattr(tiproviders, provider_name, None)
+            if not provider_class or not isclass(provider_class):
+                continue
+            # if it is a class - we only want to show concrete classes
+            # that are sub-classes of TIProvider
+            if issubclass(provider_class, tiproviders.TIProvider) and not bool(
+                getattr(provider_class, "__abstractmethods__", False)
+            ):
+                providers.append(provider_class.__name__)
+        return providers
+
+    def list_available_providers(self, show_query_types=False):  # type: ignore
+        """
+        Print a list of builtin providers with optional usage.
+
+        Parameters
+        ----------
+        show_query_types : bool, optional
+            Show query types supported by providers, by default False
+
+        """
+        for provider_name in self.available_providers:
+            provider_class = getattr(tiproviders, provider_name, None)
+            print(provider_name)
+            if show_query_types:
+                provider_class.usage()
 
     def provider_usage(self):
         """Print usage of loaded providers."""
@@ -178,7 +228,7 @@ class TILookup:
 
         """
         if not name:
-            name = provider.__name__
+            name = provider.__class__.__name__
         if primary:
             self._providers[name] = provider
         else:
@@ -187,12 +237,13 @@ class TILookup:
     # pylint: disable=too-many-arguments
     def lookup_ioc(
         self,
-        observable: str,
+        observable: str = None,
         ioc_type: str = None,
         ioc_query_type: str = None,
         providers: List[str] = None,
         prov_scope: str = "primary",
-    ) -> Tuple[bool, List[LookupResult]]:
+        **kwargs,
+    ) -> Tuple[bool, List[Tuple[str, LookupResult]]]:
         """
         Lookup single IoC in active providers.
 
@@ -200,6 +251,7 @@ class TILookup:
         ----------
         observable : str
             IoC observable
+            (`ioc` is also an alias for observable)
         ioc_type : str, optional
             One of IoCExtract.IoCType, by default None
             If none, the IoC type will be inferred
@@ -208,22 +260,32 @@ class TILookup:
         providers: List[str]
             Explicit list of providers to use
         prov_scope : str, optional
-            Use primary, secondary or all providers, by default "primary"
+            Use "primary", "secondary" or "all" providers, by default "primary"
+        kwargs :
+            Additional arguments passed to the underlying provider(s)
 
         Returns
         -------
-        Tuple[bool, List[LookupResult]]
+        Tuple[bool, List[Tuple[str, LookupResult]]]
             The result returned as a tuple(bool, list):
             bool indicates whether a TI record was found in any provider
             list has an entry for each provider result
 
         """
+        if not observable and "ioc" in kwargs:
+            observable = kwargs["ioc"]
+        if not observable:
+            raise ValueError("observable or ioc parameter must be supplied.")
+
         result_list: List[Tuple[str, LookupResult]] = []
         selected_providers = self._select_providers(providers, prov_scope)
+        if not selected_providers:
+            raise RuntimeError(_NO_PROVIDERS_MSSG)
 
+        ioc_type = ioc_type if ioc_type else TIProvider.resolve_ioc_type(observable)
         for prov_name, provider in selected_providers.items():
             provider_result: LookupResult = provider.lookup_ioc(
-                ioc=observable, ioc_type=ioc_type, query_type=ioc_query_type
+                ioc=observable, ioc_type=ioc_type, query_type=ioc_query_type, **kwargs
             )
             result_list.append((prov_name, provider_result))
         overall_result = any(res.result for _, res in result_list)
@@ -237,6 +299,7 @@ class TILookup:
         ioc_query_type: str = None,
         providers: List[str] = None,
         prov_scope: str = "primary",
+        **kwargs,
     ) -> pd.DataFrame:
         """
         Lookup a collection of IoCs.
@@ -258,7 +321,9 @@ class TILookup:
         providers: List[str]
             Explicit list of providers to use
         prov_scope : str, optional
-            Use primary, secondary or all providers, by default "primary"
+            Use "primary", "secondary" or "all" providers, by default "primary"
+        kwargs :
+            Additional arguments passed to the underlying provider(s)
 
         Returns
         -------
@@ -268,26 +333,42 @@ class TILookup:
         """
         result_list: List[pd.DataFrame] = []
         selected_providers = self._select_providers(providers, prov_scope)
+        if not selected_providers:
+            raise RuntimeError(_NO_PROVIDERS_MSSG)
+
         for prov_name, provider in selected_providers.items():
             provider_result = provider.lookup_iocs(
                 data=data,
                 obs_col=obs_col,
                 ioc_type_col=ioc_type_col,
                 query_type=ioc_query_type,
+                **kwargs,
             )
+            if not kwargs.get("show_not_supported", False):
+                provider_result = provider_result[
+                    provider_result["Status"] != TILookupStatus.not_supported.value
+                ]
+            if not kwargs.get("show_bad_ioc", False):
+                provider_result = provider_result[
+                    provider_result["Status"] != TILookupStatus.bad_format.value
+                ]
             provider_result["Provider"] = prov_name
-            result_list.extend(provider_result)
+            result_list.append(provider_result)
 
-        return pd.concat(result_list)
+        if not result_list:
+            print("No IoC matches")
+        return pd.concat(result_list, sort=False)
 
     @staticmethod
-    def result_to_df(ioc_lookup: Tuple[bool, List[LookupResult]]) -> pd.DataFrame:
+    def result_to_df(
+        ioc_lookup: Tuple[bool, List[Tuple[str, LookupResult]]]
+    ) -> pd.DataFrame:
         """
         Return DataFrame representation of IoC Lookup response.
 
         Parameters
         ----------
-        ioc_lookup : Tuple[bool, List[LookupResult]]
+        ioc_lookup : Tuple[bool, List[Tuple[str, LookupResult]]]
             Output from `lookup_ioc`
 
         Returns
@@ -299,7 +380,7 @@ class TILookup:
         """
         return pd.DataFrame(
             {r_item[0]: pd.Series(attr.asdict(r_item[1])) for r_item in ioc_lookup[1]}
-        ).T
+        ).T.rename(columns=LookupResult.column_map())
 
     def _select_providers(
         self, providers: List[str] = None, prov_scope: str = "primary"
@@ -329,7 +410,7 @@ class TILookup:
             }
         else:
             if prov_scope == "all":
-                selected_providers = self._all_providers
+                selected_providers = self._all_providers  # type: ignore
             elif prov_scope == "primary":
                 selected_providers = self._providers
             else:

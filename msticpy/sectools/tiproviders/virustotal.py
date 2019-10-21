@@ -14,7 +14,7 @@ requests per minute for the account type that you have.
 """
 from typing import Any, Tuple
 
-from .ti_provider_base import LookupResult
+from .ti_provider_base import LookupResult, TISeverity
 from .http_base import HttpProvider, IoCLookupParams
 from ...nbtools.utility import export
 from ..._version import VERSION
@@ -63,24 +63,27 @@ class VirusTotal(HttpProvider):
     _IOC_QUERIES["sha1_hash"] = _IOC_QUERIES["file_hash"]
     _IOC_QUERIES["sha256_hash"] = _IOC_QUERIES["file_hash"]
 
-    def parse_results(self, response: LookupResult) -> Tuple[bool, Any]:
+    _REQUIRED_PARAMS = ["API_KEY"]
+
+    def parse_results(self, response: LookupResult) -> Tuple[bool, TISeverity, Any]:
         """
         Return the details of the response.
 
         Parameters
         ----------
-        response : Any
+        response : LookupResult
             The returned data response
 
         Returns
         -------
-        Tuple[bool, Any]
+        Tuple[bool, TISeverity, Any]
             bool = positive or negative hit
+            TISeverity = enumeration of severity
             Object with match details
 
         """
-        if response.status == 404 or not response.raw_result:
-            return False, "Not found."
+        if self._failed_response(response) or not isinstance(response.raw_result, dict):
+            return False, TISeverity.information, "Not found."
 
         result_dict = {}
         result_dict["verbose_msg"] = response.raw_result.get("verbose_msg", None)
@@ -113,6 +116,9 @@ class VirusTotal(HttpProvider):
             )
             result_dict["positives"] = positives
 
-        return result_dict["positives"] > 0, result_dict
+        severity = (
+            TISeverity.high if result_dict["positives"] > 0 else TISeverity.information
+        )
+        return True, severity, result_dict
 
     # pylint: enable=duplicate-code

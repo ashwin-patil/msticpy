@@ -4,20 +4,20 @@
 # license information.
 # --------------------------------------------------------------------------
 """QueryStore class - holds a collection of QuerySources."""
-from typing import Dict, Iterable, Set, Union
-from os import path
 from collections import defaultdict
+from os import path
+from typing import Any, Dict, Iterable, Set, Union, Optional
 
-from .data_query_reader import read_query_def_file, find_yaml_files
-from .query_source import QuerySource
-from ..nbtools.query_defns import DataFamily, DataEnvironment
 from .._version import VERSION
+from ..nbtools.query_defns import DataEnvironment, DataFamily
+from .data_query_reader import find_yaml_files, read_query_def_file
+from .query_source import QuerySource
 
 __version__ = VERSION
 __author__ = "Ian Hellen"
 
 
-def _get_dot_path(elem_path: str, data_map: dict) -> str:
+def _get_dot_path(elem_path: str, data_map: dict) -> Any:
     path_elems = elem_path.split(".")
     cur_node = data_map
     for elem in path_elems:
@@ -51,13 +51,17 @@ class QueryStore:
             The data environment
 
         """
-        self.environment = environment  # str
-        self.data_families = defaultdict(dict)  # Dict[str, Dict[str, 'QuerySource']
-        self.data_family_defaults = defaultdict(dict)  # Dict[str, Dict[str, Any]
+        self.environment: str = environment
+        self.data_families: Dict[str, Dict[str, QuerySource]] = defaultdict(dict)
+        self.data_family_defaults: Dict[str, Dict[str, Any]] = defaultdict(dict)
 
     def __getattr__(self, name: str):
         """Return the item in dot-separated path `name`."""
         return _get_dot_path(elem_path=name, data_map=self.data_families)
+
+    def __getitem__(self, key: str):
+        """Allow query retrieval using dotted key path."""
+        return _get_dot_path(elem_path=key, data_map=self.data_families)
 
     @property
     def query_names(self) -> Iterable[str]:
@@ -80,7 +84,7 @@ class QueryStore:
             ]:
                 yield q_name
 
-    def add_data_source(self, source: "QuerySource"):
+    def add_data_source(self, source: QuerySource):
         """
         Add a datasource/query to the store.
 
@@ -130,7 +134,7 @@ class QueryStore:
 
     @classmethod
     def import_files(
-        cls, source_path: str, recursive: bool = False
+        cls, source_path: list, recursive: bool = False
     ) -> Dict[str, "QueryStore"]:
         """
         Import multiple query definition files from directory path.
@@ -156,40 +160,42 @@ class QueryStore:
             a source file.
 
         """
-        if not path.isdir(source_path):
-            raise ImportError(f"{source_path} is not a directory")
+        env_stores: Dict[str, QueryStore] = dict()
+        for query_dir in source_path:
+            if not path.isdir(query_dir):
+                raise ImportError(f"{query_dir} is not a directory")
+            for file_path in find_yaml_files(query_dir, recursive):
+                sources, defaults, metadata = read_query_def_file(str(file_path))
 
-        env_stores = dict()
-        for file_path in find_yaml_files(source_path, recursive):
-            sources, defaults, metadata = read_query_def_file(file_path)
+                for env_value in metadata["data_environments"]:
+                    if "." in env_value:
+                        env_value = env_value.split(".")[1]
+                    environment = DataEnvironment.parse(env_value)
+                    if environment == DataEnvironment.Unknown:
+                        raise ValueError(f"Unknown environment {env_value}")
 
-            for env_value in metadata["data_environments"]:
-                if "." in env_value:
-                    env_value = env_value.split(".")[1]
-                environment = DataEnvironment.parse(env_value)
-                if not environment:
-                    raise ValueError(f"Unknown environment {env_value}")
-
-                if environment.name not in env_stores:
-                    env_stores[environment.name] = cls(environment=environment.name)
-                for source_name, source in sources.items():
-                    new_source = QuerySource(source_name, source, defaults, metadata)
-                    env_stores[environment.name].add_data_source(new_source)
+                    if environment.name not in env_stores:
+                        env_stores[environment.name] = cls(environment=environment.name)
+                    for source_name, source in sources.items():
+                        new_source = QuerySource(
+                            source_name, source, defaults, metadata
+                        )
+                        env_stores[environment.name].add_data_source(new_source)
 
         return env_stores
 
     def get_query(
-        self, data_family: Union[str, DataFamily], query_name: str
+        self, query_name: str, data_family: Union[str, DataFamily] = None
     ) -> "QuerySource":
         """
         Return query with name `data_family` and `query_name`.
 
         Parameters
         ----------
-        data_family: Union[str, DataFamily]
-            The data family for the query
         query_name: str
             Name of the query
+        data_family: Union[str, DataFamily]
+            The data family for the query
 
         Returns
         -------
@@ -197,11 +203,15 @@ class QueryStore:
             Query matching name and family.
 
         """
-        if isinstance(data_family, str) and "." not in data_family:
-            data_family = DataFamily.parse(data_family)
-        return self.data_families[data_family.name][query_name]
+        if isinstance(query_name, str) and "." in query_name:
+            data_family, query_name = query_name.split(".", maxsplit=1)
+        if not data_family:
+            raise LookupError("No data family specified.")
+        if isinstance(data_family, DataFamily):
+            data_family = data_family.name
+        return self.data_families[data_family][query_name]
 
-    def find_query(self, query_name: str) -> Set["QuerySource"]:
+    def find_query(self, query_name: str) -> Set[Optional[QuerySource]]:
         """
         Return set of queries with name `query_name`.
 
@@ -216,8 +226,8 @@ class QueryStore:
             Set (distinct) queries matching name.
 
         """
-        return (
+        return {
             query_dict.get(query_name)
             for family, query_dict in self.data_families.items()
             if query_name in query_dict
-        )
+        }

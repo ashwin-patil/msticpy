@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Union, Any, Tuple
 
 from ..msticpy.nbtools import pkg_config
+from ..msticpy.nbtools.wsconfig import WorkspaceConfig
 
 _test_data_folders = [
     d for d, _, _ in os.walk(os.getcwd()) if d.endswith("/tests/testdata")
@@ -27,61 +28,89 @@ class TestPkgConfig(unittest.TestCase):
         self.assertTrue(hasattr(pkg_config, "settings"))
         self.assertTrue(hasattr(pkg_config, "default_settings"))
         self.assertTrue(hasattr(pkg_config, "custom_settings"))
-
         settings = pkg_config.settings
         self.assertIn("QueryDefinitions", settings)
         self.assertIn("Default", settings["QueryDefinitions"])
-
+        self.assertEqual(1, len(settings["QueryDefinitions"]["Default"]))
         for path in settings["QueryDefinitions"]["Default"]:
-            self.assertTrue(Path(path).is_dir())
-            yml_files = list(Path(path).glob("*.yaml"))
-            self.assertGreaterEqual(len(yml_files), 4)
+            self.assertTrue(type(path), str)
+            path = "msticpy/data/" + path
+            self.assertTrue(
+                Path(__file__).resolve().parent.parent.joinpath(path).is_dir()
+            )
 
     def test_custom_config(self):
         test_config1 = Path(_TEST_DATA).joinpath(pkg_config._CONFIG_FILE)
         os.environ[pkg_config._CONFIG_ENV_VAR] = str(test_config1)
-
         pkg_config.refresh_config()
-
         self.assertTrue(hasattr(pkg_config, "settings"))
         self.assertTrue(hasattr(pkg_config, "default_settings"))
         self.assertTrue(hasattr(pkg_config, "custom_settings"))
-
         settings = pkg_config.settings
 
         # Query Definitions
         self.assertIn("QueryDefinitions", settings)
         self.assertIn("Default", settings["QueryDefinitions"])
-
-        for path in settings["QueryDefinitions"]["Default"]:
-            self.assertTrue(Path(path).is_dir())
-            yml_files = list(Path(path).glob("*.yaml"))
-            self.assertGreaterEqual(len(yml_files), 4)
-
-        self.assertEqual(2, len(settings["QueryDefinitions"]["Custom"]))
-
+        self.assertEqual(1, len(settings["QueryDefinitions"]["Custom"]))
         for path in settings["QueryDefinitions"]["Custom"]:
-            self.assertTrue(Path(path).is_dir())
-            yml_files = list(Path(path).glob("*.yaml"))
-            if path.endswith("testdata"):
-                self.assertGreaterEqual(len(yml_files), 5)
-            else:
-                self.assertEqual(len(yml_files), 0)
+            self.assertTrue(type(path), str)
+            self.assertTrue(Path(__file__).resolve().parent.joinpath(path).is_dir())
 
         # TI Providers
-        self.assertEqual(4, len(settings["TIProviders"]))
+        self.assertGreaterEqual(len(settings["TIProviders"]), 4)
         self.assertIsInstance(settings["TIProviders"], dict)
         for _, prov in settings["TIProviders"].items():
-            self.assertIn("Args", prov)
+
             self.assertIn("Primary", prov)
             self.assertIn("Provider", prov)
-            self.assertIsInstance(prov["Args"], dict)
-            self.assertIn("ApiID", prov["Args"])
-            self.assertIn("AuthKey", prov["Args"])
-            if isinstance(prov["Args"]["ApiID"], dict):
-                self.assertTrue(
-                    "EnvironmentVar" in prov["Args"]["ApiID"]
-                    or "KeyVaultURI" in prov["Args"]["ApiID"]
-                )
-            else:
-                self.assertIsInstance(prov["Args"]["ApiID"], str)
+            if "Args" in prov:
+                self.assertIsInstance(prov["Args"], dict)
+                for arg_name, arg_val in prov["Args"].items():
+                    self.assertIn(
+                        arg_name, ["ApiID", "AuthKey", "WorkspaceID", "TenantID"]
+                    )
+                    self.assertTrue(
+                        isinstance(arg_val, str)
+                        or "EnvironmentVar" in arg_val
+                        or "KeyVaultURI" in arg_val
+                    )
+
+    def test_wsconfig(self):
+        test_config1 = Path(_TEST_DATA).joinpath(pkg_config._CONFIG_FILE)
+        os.environ[pkg_config._CONFIG_ENV_VAR] = str(test_config1)
+        pkg_config.refresh_config()
+
+        # Default workspace
+        _DEF_WS = {
+            "WorkspaceId": "52b1ab41-869e-4138-9e40-2a4457f09bf3",
+            "TenantId": "72f988bf-86f1-41af-91ab-2d7cd011db49",
+        }
+        ws_config = WorkspaceConfig()
+        self.assertIn("workspace_id", ws_config)
+        self.assertEqual(ws_config["workspace_id"], _DEF_WS["WorkspaceId"])
+        self.assertIn("tenant_id", ws_config)
+        self.assertEqual(ws_config["tenant_id"], _DEF_WS["TenantId"])
+        self.assertIsNotNone(ws_config.code_connect_str)
+        self.assertTrue(
+            ws_config.code_connect_str.startswith("loganalytics://code().tenant(")
+            and _DEF_WS["WorkspaceId"] in ws_config.code_connect_str
+            and _DEF_WS["TenantId"] in ws_config.code_connect_str
+        )
+
+        # Named workspace
+        _NAMED_WS = {
+            "WorkspaceId": "a927809c-8142-43e1-96b3-4ad87cfe95a3",
+            "TenantId": "69d28fd7-42a5-48bc-a619-af56397b9f28",
+        }
+        wstest_config = WorkspaceConfig(workspace="MyTestWS")
+        self.assertIn("workspace_id", wstest_config)
+        self.assertIsNotNone(wstest_config["workspace_id"])
+        self.assertEqual(wstest_config["workspace_id"], _NAMED_WS["WorkspaceId"])
+        self.assertIn("tenant_id", wstest_config)
+        self.assertEqual(wstest_config["tenant_id"], _NAMED_WS["TenantId"])
+        self.assertIsNotNone(wstest_config.code_connect_str)
+        self.assertTrue(
+            wstest_config.code_connect_str.startswith("loganalytics://code().tenant(")
+            and _NAMED_WS["WorkspaceId"] in wstest_config.code_connect_str
+            and _NAMED_WS["TenantId"] in wstest_config.code_connect_str
+        )

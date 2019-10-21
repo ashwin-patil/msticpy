@@ -14,10 +14,13 @@ line arguments into a single string). This is still a work-in-progress.
 
 """
 import codecs
+import re
 from datetime import datetime
 from typing import Mapping, Any, Tuple, Dict, List, Optional, Set
-
+import math
 import pandas as pd
+from .eventcluster import dbcluster_events, add_process_features
+
 
 from .._version import VERSION
 
@@ -107,9 +110,9 @@ def unpack_auditd(audit_str: List[Dict[str, str]]) -> Mapping[str, Mapping[str, 
 
     """
     event_dict: Dict[str, Dict[str, Any]] = {}
-
-    # The audit_str is a list of dicts - '{EXECVE : {'p1': 'foo', p2: 'bar'...},
+    # The audit_str should be a list of dicts - '{EXECVE : {'p1': 'foo', p2: 'bar'...},
     #                                      PATH: {'a1': 'xyz',....}}
+
     for record in audit_str:
         # process a single message type, splitting into type name
         # and contents
@@ -136,7 +139,7 @@ def unpack_auditd(audit_str: List[Dict[str, str]]) -> Mapping[str, Mapping[str, 
                         # Mypy thinks codecs.decode returns a str so
                         # incorrectly issues a type warning - in this case it
                         # will return a bytes string.
-                        field_value = codecs.decode(
+                        field_value = codecs.decode(  # type: ignore
                             bytes(rec_split[1], "utf-8"), "hex"
                         ).decode("utf-8")
                     except ValueError:
@@ -285,6 +288,16 @@ def extract_events_to_df(
         start_time = datetime.utcnow()
         print(f"Unpacking auditd messages for {len(data)} events...")
 
+    # If the provided table has auditd messages as a string format and
+    # extract key elements.
+    if isinstance(data[input_column].head(1)[0], str):
+        data["mssg_id"] = data.apply(
+            lambda x: _extract_timestamp(x[input_column]), axis=1
+        )
+        data[input_column] = data.apply(
+            lambda x: _parse_audit_message(x[input_column]), axis=1
+        )
+
     # Our first pandas expression does most of the work - unpacking the
     # column contents, then extracting these into a two columns
     # EventType (the main auditd mssg type) and a dict of k/v values
@@ -296,7 +309,7 @@ def extract_events_to_df(
     ).rename(columns={0: "EventType", 1: "EventData"})
     # if only one type of event is requested
     if event_type:
-        tmp_df = tmp_df[tmp_df["EventType"] == event_type]
+        tmp_df = tmp_df.loc[tmp_df["EventType"] == event_type]
         if verbose:
             print(f"Event subset = ", event_type, " (events: {len(tmp_df)})")
 
@@ -325,7 +338,7 @@ def extract_events_to_df(
 
     # extract real timestamp from mssg_id
     tmp_df["TimeStamp"] = tmp_df.apply(
-        lambda x: datetime.utcfromtimestamp(float(x.mssg_id.split(":")[0])), axis=1
+        lambda x: datetime.utcfromtimestamp(float(x["mssg_id"].split(":")[0])), axis=1
     )
     tmp_df = (
         tmp_df.drop(["TimeGenerated"], axis=1)
@@ -398,26 +411,21 @@ def read_from_file(
     first separator in a line will be lost.
 
     """
-    # read in the file using pd.read_csv() and extract
-    # message type, Id string and content into 3 columns
-    rec_pattern = r"type=([^\s]+)\s+msg=audit\(([^\)]+)\):\s+(.+)$"
-    df_raw = (
-        pd.read_csv(
-            filepath,
-            sep=dummy_sep,
-            names=["raw_data"],
-            skip_blank_lines=True,
-            squeeze=True,
-        )
-        .str.extract(rec_pattern)
-        .rename(columns={0: "mssg_type", 1: "mssg_id", 2: "mssg_content"})
+    # read in the file using pd.read_csv()
+    df_raw = pd.read_csv(
+        filepath, sep=dummy_sep, names=["raw_data"], skip_blank_lines=True, squeeze=True
     )
 
+    # extract message ID into seperate column
+    df_raw["mssg_id"] = df_raw.apply(
+        lambda x: _extract_timestamp(x["raw_data"]), axis=1
+    )
     # Pack message type and content into a dictionary:
     # {'mssg_type: ['item1=x, item2=y....]}
     df_raw["AuditdMessage"] = df_raw.apply(
-        lambda x: {x.mssg_type: x.mssg_content.split(" ")}, axis=1
+        lambda x: _parse_audit_message(x["raw_data"]), axis=1
     )
+
     # Group the data by message id string and concatenate the message content
     # dictionaries in a list.
     df_grouped_cols = (
@@ -430,3 +438,242 @@ def read_from_file(
         event_type=event_type,
         verbose=verbose,
     )
+
+
+def _parse_audit_message(audit_str: str) -> List[Dict[str, List[str]]]:
+    """
+    Parse an auditd message string into List format required by unpack_auditd.
+
+    Parameters
+    ----------
+    audit_str : str
+        The Audit message
+
+    Returns
+    -------
+    List[Dict[str, str]]
+        The extracted message values
+
+    """
+    audit_message = audit_str.rstrip().split(": ")
+    audit_headers = audit_message[0]
+    audit_hdr_match = re.match(r"type=([^\s]+)", audit_headers)
+    if audit_hdr_match:
+        audit_msg = [{audit_hdr_match.group(1): audit_message[1].split(" ")}]
+        return audit_msg
+    return []  # type ignore
+
+
+def _extract_timestamp(audit_str: str) -> str:
+    """
+    Parse an auditd message string and extract the message time.
+
+    Parameters
+    ----------
+    audit_str : str
+        The Audit message
+
+    Returns
+    -------
+    str
+        The extracted message time string
+
+    """
+    audit_message = audit_str.rstrip().split(": ")
+    audit_headers = audit_message[0]
+    audit_hdr_match = re.match(r".*msg=audit\(([^\)]+)\)", audit_headers)
+    if audit_hdr_match:
+        time_stamp = audit_hdr_match.group(1).split(":")[0]
+        return time_stamp
+    return ""
+
+
+# pylint: disable=too-many-branches
+def generate_process_tree(
+    audit_data: pd.DataFrame, branch_depth: int = 4, processes: pd.DataFrame = None
+) -> pd.DataFrame:
+    """
+    Generate process tree data from auditd logs.
+
+    Parameters
+    ----------
+    audit_data : pd.DataFrame
+        The Audit data containing process creation events
+    branch_depth: int, optional
+        The maximum depth of parent or child processes to extract from the data
+        (The default is 4)
+
+    Returns
+    -------
+    pd.DataFrame
+        The formatted process tree data
+
+    """
+    # Generate process tree from the auditd data
+    if processes is None:
+        procs = audit_data.loc[audit_data["pid"].notnull()].head()
+    else:
+        procs = processes
+    if "NodeRole" not in procs and "Level" not in procs:
+        procs.loc[:, "NodeRole"] = pd.Series("source", index=procs.index)
+        procs.loc[:, "Level"] = pd.Series(0, index=procs.index)
+    process_tree = pd.DataFrame()
+    for proc_pid in procs["pid"]:
+        pdf = audit_data.loc[audit_data["pid"] == (int(proc_pid))]
+        pdf.loc[:, "NodeRole"] = pd.Series("parent", index=pdf.index)
+        pdf.loc[:, "Level"] = pd.Series(1, index=pdf.index)
+        process_tree = process_tree.append(pdf, sort=False)
+        count = 1
+        while count <= branch_depth:
+            if pdf.empty:
+                count = branch_depth + 1
+            else:
+                for ancest_pid in pdf["ppid"]:
+                    if math.isnan(ancest_pid):
+                        count = branch_depth + 1
+                        continue
+                    pdf = audit_data.loc[audit_data["pid"] == (int(ancest_pid))]
+                    pdf.loc[:, "NodeRole"] = pd.Series("parent", index=pdf.index)
+                    pdf.loc[:, "Level"] = pd.Series(count + 1, index=pdf.index)
+                    process_tree = process_tree.append(pdf, sort=False)
+                    count = count + 1
+        for _, proc in procs.iterrows():
+            child_procs = audit_data.loc[
+                (audit_data["TimeGenerated"] > proc["TimeGenerated"])
+            ]
+            cdf = child_procs.loc[child_procs["ppid"] == (int(proc["pid"]))]
+            cdf.loc[:, "NodeRole"] = pd.Series("child", index=cdf.index)
+            cdf.loc[:, "Level"] = pd.Series(1, index=cdf.index)
+            process_tree = process_tree.append(cdf, sort=False)
+            count = 1
+            while count <= branch_depth:
+                if cdf.empty:
+                    count = branch_depth + 1
+                else:
+                    for desc_pid in cdf["pid"]:
+                        cdf = audit_data.loc[audit_data["ppid"] == (int(desc_pid))]
+                        cdf.loc[:, "NodeRole"] = pd.Series("child", index=cdf.index)
+                        cdf.loc[:, "Level"] = pd.Series(count + 1, index=cdf.index)
+                        process_tree = process_tree.append(cdf, sort=False)
+                        count = count + 1
+    process_tree = process_tree.rename(
+        columns={
+            "acct": "SubjectUserName",
+            "uid": "SubjectUserSid",
+            "user": "SubjectUserName",
+            "ses": "SubjectLogonId",
+            "pid": "NewProcessId",
+            "exe": "NewProcessName",
+            "ppid": "ProcessId",
+            "cmd": "CommandLine",
+        }
+    )
+    process_tree = process_tree.append(procs, sort=False).sort_values(
+        by="TimeGenerated"
+    )[
+        [
+            "TimeGenerated",
+            "NewProcessName",
+            "CommandLine",
+            "NewProcessId",
+            "SubjectUserSid",
+            "cwd",
+            "ProcessId",
+            "NodeRole",
+            "Level",
+        ]
+    ]
+    process_tree = process_tree.loc[
+        process_tree["NewProcessId"].notnull()
+    ].drop_duplicates()
+    return process_tree
+
+
+def cluster_auditd_processes(audit_data: pd.DataFrame, app: str) -> pd.DataFrame:
+    """
+    Clusters process data into specific processes.
+
+    Parameters
+    ----------
+    audit_data : pd.DataFrame
+        The Audit data containing process creation events
+    app: str
+        The name of a specific app you wish to cluster
+
+    Returns
+    -------
+    pd.DataFrame
+        Details of the clustered process
+
+    """
+    if app is not None:
+        processes = audit_data[audit_data["exe"].str.contains(app, na=False)]
+    else:
+        processes = audit_data
+    processes = processes.rename(
+        columns={
+            "acct": "SubjectUserName",
+            "uid": "SubjectUserSid",
+            "user": "SubjectUserName",
+            "ses": "SubjectLogonId",
+            "pid": "NewProcessId",
+            "exe": "NewProcessName",
+            "ppid": "ProcessId",
+            "cmd": "CommandLine",
+        }
+    )
+    req_cols = [
+        "cwd",
+        "SubjectUserName",
+        "SubjectUserSid",
+        "SubjectUserName",
+        "SubjectLogonId",
+        "NewProcessId",
+        "NewProcessName",
+        "ProcessId",
+        "CommandLine",
+    ]
+    for col in req_cols:
+        if col not in processes:
+            processes[col] = ""
+
+    feature_procs_h1 = add_process_features(input_frame=processes)
+
+    clus_events, _, _ = dbcluster_events(
+        data=feature_procs_h1,
+        cluster_columns=["pathScore", "SubjectUserSid"],
+        time_column="TimeGenerated",
+        max_cluster_distance=0.0001,
+    )
+    (
+        clus_events.sort_values("TimeGenerated")[
+            [
+                "TimeGenerated",
+                "LastEventTime",
+                "NewProcessName",
+                "CommandLine",
+                "SubjectLogonId",
+                "SubjectUserSid",
+                "pathScore",
+                "isSystemSession",
+                "ProcessId",
+                "ClusterSize",
+            ]
+        ].sort_values("ClusterSize", ascending=True)
+    )
+
+    procs = clus_events[
+        [
+            "TimeGenerated",
+            "NewProcessName",
+            "CommandLine",
+            "NewProcessId",
+            "SubjectUserSid",
+            "cwd",
+            "ClusterSize",
+            "ProcessId",
+        ]
+    ]
+    procs = procs.rename(columns={"NewProcessId": "pid", "ProcessId": "ppid"})
+
+    return procs

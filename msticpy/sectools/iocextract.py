@@ -25,11 +25,12 @@ The following types are built-in:
 
 import re
 import sys
+import warnings
 from collections import defaultdict, namedtuple
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Set, Tuple
-from urllib.error import HTTPError
+from typing import Any, Dict, List, Set, Tuple, Union
+from urllib.error import HTTPError, URLError
 from urllib.parse import unquote
 
 import pandas as pd
@@ -177,7 +178,7 @@ class IoCExtract:
         self.add_ioc_type(IoCType.sha1_hash.name, self.SHA1_REGEX, 1, "hash")
         self.add_ioc_type(IoCType.sha256_hash.name, self.SHA256_REGEX, 1, "hash")
 
-        self.__class__.tld_index = self.get_tlds()
+        self.__class__.tld_index: Set[str] = self.get_tlds()
 
     # Public members
     def add_ioc_type(
@@ -241,7 +242,7 @@ class IoCExtract:
         data: pd.DataFrame = None,
         columns: List[str] = None,
         **kwargs,
-    ) -> Any:
+    ) -> Union[Dict[str, Set[str]], pd.DataFrame]:
         """
         Extract IoCs from either a string or pandas DataFrame.
 
@@ -323,7 +324,7 @@ class IoCExtract:
 
         col_set = set(columns)
         if not col_set <= set(data.columns):
-            missing_cols = [elem for elem in col_set if elem not in data.colums]
+            missing_cols = [elem for elem in col_set if elem not in data.columns]
             raise Exception(
                 "Source column(s) {} not found in supplied DataFrame".format(
                     ", ".join(missing_cols)
@@ -331,7 +332,7 @@ class IoCExtract:
             )
 
         result_columns = ["IoCType", "Observable", "SourceIndex"]
-        result_rows = []
+        result_rows: List[pd.Series] = []
         for idx, datarow in data.iterrows():
             result_rows.extend(
                 self._search_in_row(
@@ -350,7 +351,7 @@ class IoCExtract:
         result_columns: List[str],
         os_family: str,
         ioc_types_to_use: List[str],
-    ):
+    ) -> List[pd.Series]:
         """Return results for a single input row."""
         result_rows = []
         for col in columns:
@@ -429,7 +430,7 @@ class IoCExtract:
 
         col_set = set(columns)
         if not col_set <= set(data.columns):
-            missing_cols = [elem for elem in col_set if elem not in data.colums]
+            missing_cols = [elem for elem in col_set if elem not in data.columns]
             raise Exception(
                 "Source column(s) {} not found in supplied DataFrame".format(
                     ", ".join(missing_cols)
@@ -550,12 +551,22 @@ class IoCExtract:
 
         """
         try:
-            tld_list = "http://data.iana.org/TLD/tlds-alpha-by-domain.txt"
+            tld_list = "https://data.iana.org/TLD/tlds-alpha-by-domain.txt"
             temp_df = pd.read_csv(tld_list, skiprows=1, names=["TLD"])
-            return set(temp_df["TLD"])
-        except HTTPError:
-            # if we failed to get the list try to read from a seed file
-            return cls._read_tld_seed_file()
+            return set(temp_df["TLD"].dropna())
+        except (HTTPError, URLError):
+            pass
+        # pylint: disable=broad-except
+        except Exception as err:
+            warnings.warn(
+                "Exception detected trying to retrieve IANA top-level domain list."
+                + "Falling back to builtin seed list. "
+                + f"{err.args}",
+                RuntimeWarning,
+            )
+        # pylint: enable=broad-except
+        # if we failed to get the list try to read from a seed file
+        return cls._read_tld_seed_file()
 
     @classmethod
     def _read_tld_seed_file(cls) -> Set[str]:
@@ -568,7 +579,9 @@ class IoCExtract:
             # in the package tree - we use the first one we find
             pkg_paths = sys.modules["msticpy"]
             if pkg_paths:
-                conf_file = next(Path(pkg_paths.__path__[0]).glob(seed_file))
+                conf_file = str(
+                    next(Path(pkg_paths.__path__[0]).glob(seed_file))  # type: ignore
+                )
 
         if conf_file:
             with open(conf_file, "r") as file_handle:
@@ -600,7 +613,7 @@ class IoCExtract:
             True if valid Top Level Domain
 
         """
-        if not self.tld_index:
+        if not self.tld_index:  # type: ignore
             self.tld_index = self.get_tlds()
         if not self.tld_index:
             return True
@@ -610,7 +623,7 @@ class IoCExtract:
     # Private methods
     def _scan_for_iocs(
         self, src: str, os_family: str, ioc_types: List[str] = None
-    ) -> Mapping[str, Set[str]]:
+    ) -> Dict[str, Set[str]]:
         """Return IoCs found in the string."""
         ioc_results: Dict[str, Set] = defaultdict(set)
         iocs_found: Dict[str, Tuple[str, int]] = {}
@@ -620,9 +633,9 @@ class IoCExtract:
             if ioc_types and ioc_type not in ioc_types:
                 continue
 
-            if os_family == "Linux" and rgx_def.ioc_type == "windows_path":
-                continue
-            elif os_family == "Windows" and rgx_def.ioc_type == "linux_path":
+            if (os_family == "Linux" and rgx_def.ioc_type == "windows_path") or (
+                os_family == "Windows" and rgx_def.ioc_type == "linux_path"
+            ):
                 continue
 
             match_pos = 0

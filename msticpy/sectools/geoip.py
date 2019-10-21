@@ -17,25 +17,29 @@ for different services:
    an online lookup (API key required).
 
 """
-# import gzip
-from json import JSONDecodeError
+import gzip
 import math
 import os
+from pathlib import Path
+import shutil
+import warnings
 from abc import ABCMeta, abstractmethod
 from collections.abc import Iterable
 from datetime import datetime, timedelta
-from typing import Tuple, List, Dict
-from IPython import get_ipython
-from IPython.display import display, HTML
+from json import JSONDecodeError
+from typing import Dict, List, Tuple, Optional
 
 import pandas as pd
 import requests
+from requests.exceptions import HTTPError
+from IPython import get_ipython
+from IPython.display import HTML, display
+import geoip2.database  # type: ignore
+from geoip2.errors import AddressNotFoundError  # type: ignore
 
-from geolite2 import geolite2
-
-from ..nbtools.entityschema import GeoLocation, IpAddress
-from ..nbtools.utility import export
 from .._version import VERSION
+from ..nbtools.entityschema import GeoLocation, IpAddress  # type: ignore
+from ..nbtools.utility import export
 
 __version__ = VERSION
 __author__ = "Ian Hellen"
@@ -197,15 +201,15 @@ class IPStackLookup(GeoIpLookup):
             ip_entity = IpAddress()
             ip_entity.Address = ip_loc["ip"]
         geo_entity = GeoLocation()
-        geo_entity.CountryCode = ip_loc["country_code"]
+        geo_entity.CountryCode = ip_loc["country_code"]  # type: ignore
 
-        geo_entity.CountryName = ip_loc["country_name"]
-        geo_entity.State = ip_loc["region_name"]
-        geo_entity.City = ip_loc["city"]
-        geo_entity.Longitude = ip_loc["longitude"]
-        geo_entity.Latitude = ip_loc["latitude"]
+        geo_entity.CountryName = ip_loc["country_name"]  # type: ignore
+        geo_entity.State = ip_loc["region_name"]  # type: ignore
+        geo_entity.City = ip_loc["city"]  # type: ignore
+        geo_entity.Longitude = ip_loc["longitude"]  # type: ignore
+        geo_entity.Latitude = ip_loc["latitude"]  # type: ignore
         if "connection" in ip_loc:
-            geo_entity.Asn = ip_loc["connection"]["asn"]
+            geo_entity.Asn = ip_loc["connection"]["asn"]  # type: ignore
         ip_entity.Location = geo_entity
         return ip_entity
 
@@ -291,19 +295,188 @@ class GeoLiteLookup(GeoIpLookup):
 
     """
 
-    _MAXMIND_DOWNLOAD = "https://dev.maxmind.com/geoip/geoip2/geolite2/#Downloads"
+    _MAXMIND_DOWNLOAD = (
+        "https://geolite.maxmind.com/download/geoip/database/GeoLite2-City.mmdb.gz"
+    )
+    _DB_HOME = os.path.join(os.path.expanduser('~'), ".msticpy")
+    _DB_ARCHIVE = "GeoLite2-City.mmdb.gz"
     _DB_FILE = "GeoLite2-City.mmdb"
 
-    # Check for out of date file
-    _last_mod_time = datetime.fromtimestamp(os.path.getmtime(geolite2.filename))
-    _db_age = datetime.utcnow() - _last_mod_time
-    if _db_age > timedelta(40):
-        print(f"{_DB_FILE} is over one month old. Update the maxminddb package")
-        print(f"to refresh or download a new version from {_MAXMIND_DOWNLOAD}")
+    def __init__(
+        self,
+        db_folder: str = None,
+        force_update: bool = False,
+        auto_update: bool = True,
+    ):
+        r"""
+        Return new instance of GeoLiteLookup class.
 
-    def __init__(self):
-        """Return new instance of GeoLiteLookup class."""
-        self._reader = geolite2.reader()
+        Parameters
+        ----------
+        db_folder: str, optional
+            Provide absolute path to the folder containing MMDB file
+            (e.g. '/usr/home' or 'C:\maxmind').
+            If no path provided, it is set to download to .msticpy dir under user`s home directory.
+        force_update : bool, optional
+            Force update can be set to true or false. depending on it,
+            new download request will be initiated.
+
+        """
+        if db_folder is None:
+            db_folder = self._DB_HOME
+        self._force_update = force_update
+        self._auto_update = auto_update
+        self._check_and_update_db(db_folder, self._force_update, self._auto_update)
+        self._dbpath = self._get_geoip_dbpath(db_folder)
+        if not self._dbpath:
+            raise RuntimeError("No usable GeoIP Database could be found.")
+        self._reader = geoip2.database.Reader(self._dbpath)
+
+    def _download_and_extract_gzip(self, url: str = None, db_folder: str = None):
+        r"""
+        Download file from the given URL and extract if it is archive.
+
+        Parameters
+        ----------
+        url : str
+            Web URL location to the Maxmind city Database. (the default is None)
+        db_folder: str, optional
+            Provide absolute path to the folder containing MMDB file
+            (e.g. '/usr/home' or 'C:\maxmind').
+            If no path provided, it is set to download to .msticpy dir under
+            user`s home directory.(the default is None)
+
+        """
+        if url is None:
+            url = self._MAXMIND_DOWNLOAD
+
+        if db_folder is None:
+            db_folder = self._DB_HOME
+
+        if not os.path.exists(db_folder):
+            os.mkdir(db_folder)
+        db_archive_path = os.path.join(db_folder, self._DB_ARCHIVE)
+        db_file_path = os.path.join(db_folder, self._DB_FILE)
+
+        try:
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+        except HTTPError as http_err:
+            warnings.warn(
+                f"HTTP error occurred trying to download GeoLite DB: {http_err}",
+                RuntimeWarning,
+            )
+        # pylint: disable=broad-except
+        except Exception as err:
+            warnings.warn(
+                f"Other error occurred trying to download GeoLite DB: {err}",
+                RuntimeWarning,
+            )
+        # pylint: enable=broad-except
+        else:
+            print("Downloading GeoLite DB archive from MaxMind....")
+            with open(db_archive_path, "wb") as file_hdl:
+                for chunk in response.iter_content(chunk_size=10000):
+                    file_hdl.write(chunk)
+            try:
+                with gzip.open(db_archive_path, "rb") as f_in:
+                    print(f"Extracting city database...")
+                    with open(db_file_path, "wb") as f_out:
+                        shutil.copyfileobj(f_in, f_out)
+                        print(
+                            "Extraction complete. Local Maxmind city DB:",
+                            f"{db_file_path}",
+                        )
+            except IOError as err:
+                warnings.warn(f"Error writing GeoIP DB file: {db_archive_path} - {err}")
+
+    @staticmethod
+    def _get_geoip_dbpath(db_folder: str = None) -> Optional[str]:
+        r"""
+        Get the correct path containing GeoLite City Database.
+
+        Parameters
+        ----------
+        db_folder: str, optional
+            Provide absolute path to the folder containing MMDB file
+            (e.g. '/usr/home' or 'C:\maxmind').
+            If no path provided, it is set to download to .msticpy dir under
+            user`s home directory.
+
+        Returns
+        -------
+        Optional[str]
+            Returns the absolute path of local maxmind geolite city
+            database after control flow logic.
+
+        """
+        if not db_folder:
+            db_folder = "."
+        list_of_db_paths = [str(db) for db in Path(db_folder).glob("*.mmdb")]
+
+        if len(list_of_db_paths) > 1:
+            latest_db_path = max(list_of_db_paths, key=os.path.getmtime)
+        elif len(list_of_db_paths) == 1:
+            latest_db_path = list_of_db_paths[0]
+        else:
+            return None
+
+        return latest_db_path
+
+    def _check_and_update_db(
+        self,
+        db_folder: str = None,
+        force_update: bool = False,
+        auto_update: bool = True,
+    ):
+        r"""
+        Check the age of geo ip database file and download if it older than 30 days.
+
+        User can set auto_update or force_update to True or False to
+        override auto-download behavior.
+
+        Parameters
+        ----------
+        db_folder: str, optional
+            Provide absolute path to the folder containing MMDB file
+            (e.g. '/usr/home' or 'C:\maxmind').
+            If no path provided, it is set to download to .msticpy dir under
+            user`s home directory.
+        force_update : bool, optional
+            Force update can be set to true or false. depending on it,
+            new download request will be initiated, overriding age criteria.
+        auto_update : bool, optional
+            Auto update can be set to true or false. depending on it,
+            new download request will be initiated if age criteria is matched.
+
+        """
+        geoip_db_path = self._get_geoip_dbpath(db_folder)
+
+        if geoip_db_path is None:
+            print(
+                "No local Maxmind City Database found. ",
+                f"Attempting to downloading new database to {db_folder}",
+            )
+            self._download_and_extract_gzip(self._MAXMIND_DOWNLOAD, db_folder)
+        else:
+            # Create a reader object to retrive db info and build date
+            # to check age from build_epoch property.
+            reader = geoip2.database.Reader(geoip_db_path)
+            last_mod_time = datetime.utcfromtimestamp(reader.metadata().build_epoch)
+            # Check for out of date DB file according to db_age
+            db_age = datetime.utcnow() - last_mod_time
+            if db_age > timedelta(30) and auto_update:
+                print(
+                    "Latest local Maxmind City Database present is older than 30 days.",
+                    f"Attempting to download new database to {db_folder}",
+                )
+                self._download_and_extract_gzip(self._MAXMIND_DOWNLOAD, db_folder)
+            elif force_update and auto_update:
+                print(
+                    "force_update is set to True.",
+                    f"Attempting to download new database to {db_folder}",
+                )
+                self._download_and_extract_gzip(self._MAXMIND_DOWNLOAD, db_folder)
 
     def lookup_ip(
         self,
@@ -312,7 +485,7 @@ class GeoLiteLookup(GeoIpLookup):
         ip_entity: IpAddress = None,
     ) -> Tuple[List[Tuple[Dict[str, str], int]], List[IpAddress]]:
         """
-        Lookup IP location from IPStack web service.
+        Lookup IP location from GeoLite2 data created by MaxMind.
 
         Parameters
         ----------
@@ -343,7 +516,11 @@ class GeoLiteLookup(GeoIpLookup):
         output_raw = []
         output_entities = []
         for ip_input in ip_list:
-            geo_match = self._reader.get(ip_input)
+            geo_match = None
+            try:
+                geo_match = self._reader.city(ip_input).raw
+            except (AddressNotFoundError, AttributeError):
+                continue
             if geo_match:
                 output_raw.append(geo_match)
                 output_entities.append(
@@ -358,16 +535,26 @@ class GeoLiteLookup(GeoIpLookup):
             ip_entity = IpAddress()
             ip_entity.Address = ip_address
         geo_entity = GeoLocation()
-        geo_entity.CountryCode = geo_match.get("country", {}).get("iso_code", None)
-        geo_entity.CountryName = (
+        geo_entity.CountryCode = geo_match.get("country", {}).get(  # type: ignore
+            "iso_code", None
+        )
+        geo_entity.CountryName = (  # type: ignore
             geo_match.get("country", {}).get("names", {}).get("en", None)
         )
         subdivs = geo_match.get("subdivisions", [])
         if subdivs:
-            geo_entity.State = subdivs[0].get("names", {}).get("en", None)
-        geo_entity.City = geo_match.get("city", {}).get("names", {}).get("en", None)
-        geo_entity.Longitude = geo_match.get("location", {}).get("longitude", None)
-        geo_entity.Latitude = geo_match.get("location", {}).get("latitude", None)
+            geo_entity.State = (  # type: ignore
+                subdivs[0].get("names", {}).get("en", None)
+            )
+        geo_entity.City = (  # type: ignore
+            geo_match.get("city", {}).get("names", {}).get("en", None)
+        )
+        geo_entity.Longitude = geo_match.get("location", {}).get(  # type: ignore
+            "longitude", None
+        )
+        geo_entity.Latitude = geo_match.get("location", {}).get(  # type: ignore
+            "latitude", None
+        )
         ip_entity.Location = geo_entity
         return ip_entity
 
