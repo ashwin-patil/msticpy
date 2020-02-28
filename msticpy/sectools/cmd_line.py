@@ -3,8 +3,9 @@
 # Licensed under the MIT License. See License.txt in the project root for
 # license information.
 # --------------------------------------------------------------------------
-
 """
+cmd_line - Syslog Command processing module.
+
 Contains a series of functions required to correct collect, parse and visualise
 linux syslog data.
 
@@ -21,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from .._version import VERSION
-from ..nbtools.utility import export
+from ..nbtools.utility import export, MsticpyException
 from .base64unpack import unpack
 
 __version__ = VERSION
@@ -56,7 +57,7 @@ def risky_cmd_line(
     detection_rules: str, optional
         Path to json file containing patterns of risky activity to detect.
         (Defaults to msticpy/resources/cmd_line_rules.json)
-    cmd_field: str, optiona;
+    cmd_field: str, optional;
         The column in the events dataset that contains the command lines to
         be analysed.
         (Defaults to "Command")
@@ -68,12 +69,12 @@ def risky_cmd_line(
 
     Raises
     ------
-    AttributeError
+    MsticpyException
         The provided dataset does not contain the cmd_field field
 
     """
     if cmd_field not in events.columns:
-        raise AttributeError(
+        raise MsticpyException(
             f"The provided dataset does not contain the {cmd_field} field"
         )
 
@@ -98,8 +99,8 @@ def risky_cmd_line(
         for date, message in activity[cmd_field].items():
             if b64_regex.match(message):
                 b64match = b64_regex.search(message)
-                b64string = unpack(input_string=b64match[1])
-                b64string = b64string[1]["decoded_string"].to_string()
+                b64string = unpack(input_string=b64match[1])  # type: ignore
+                b64string = b64string[1]["decoded_string"].to_string()  # type: ignore
                 if re.match(detection, message):
                     risky_actions.update({date: message})
                 else:
@@ -121,7 +122,7 @@ def cmd_speed(
 
     Parameters
     ----------
-    events: pd.DataFrame
+    cmd_events: pd.DataFrame
         A DataFrame of all sudo events to check.
     cmd_field: str
         The column of the event data that contains command line activity
@@ -145,10 +146,10 @@ def cmd_speed(
 
     """
     if cmd_field not in cmd_events.columns:
-        raise AttributeError(f"Dataframe does not contain {cmd_field} column")
+        raise MsticpyException(f"Dataframe does not contain {cmd_field} column")
 
     if isinstance(cmd_events["TimeGenerated"].iloc[0], dt.datetime) is False:
-        raise AttributeError("TimeGenerated is not a datetime format")
+        raise MsticpyException("TimeGenerated is not a datetime format")
 
     suspicious_actions = []
     cmd_events[cmd_field].replace("", np.nan, inplace=True)

@@ -11,7 +11,7 @@ import warnings
 
 import pandas as pd
 
-from .drivers import DriverBase, KqlDriver, SecurityGraphDriver
+from .drivers import DriverBase, KqlDriver, SecurityGraphDriver, MDATPDriver
 from .query_store import QueryStore
 from .param_extractor import extract_query_params
 from ..nbtools.query_defns import DataEnvironment
@@ -28,6 +28,7 @@ _ENVIRONMENT_DRIVERS = {
     DataEnvironment.LogAnalytics: KqlDriver,
     DataEnvironment.AzureSecurityCenter: KqlDriver,
     DataEnvironment.SecurityGraph: SecurityGraphDriver,
+    DataEnvironment.MDATP: MDATPDriver,
 }
 
 
@@ -42,6 +43,13 @@ class AttribHolder:
         """Return iterator over the attributes."""
         return iter(self.__dict__.items())
 
+    def __getattr__(self, name):
+        """Print usable error message if attribute not found."""
+        if name not in self.__dict__:
+            print(f"Query attribute {name} not found.")
+            print("Use QueryProvider.list_queries() to see available queries.")
+        return super().__getattribute__(name)
+
 
 @export
 class QueryProvider:
@@ -53,7 +61,7 @@ class QueryProvider:
 
     """
 
-    def __init__(  # noqa: MC001
+    def __init__(  # noqa: MC0001
         self, data_environment: Union[str, DataEnvironment], driver: DriverBase = None
     ):
         """
@@ -134,13 +142,13 @@ class QueryProvider:
                 return getattr(parent, child_name)
         raise AttributeError(f"{name} is not a valid attribute.")
 
-    def connect(self, connection_str: str, **kwargs):
+    def connect(self, connection_str: str = None, **kwargs):
         """
         Connect to data source.
 
         Parameters
         ----------
-        connection_string : str
+        connection_str : str
             Connection string for the data source
 
         """

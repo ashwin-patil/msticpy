@@ -5,14 +5,19 @@ Microsoft Threat Intelligence Python Security Tools.
 The **msticpy** package was initially developed to support [Jupyter Notebook](https://jupyter-notebook.readthedocs.io/en/stable/examples/Notebook/What%20is%20the%20Jupyter%20Notebook.html)
 authoring for [Azure Sentinel](https://azure.microsoft.com/en-us/services/azure-sentinel/).
 Many of the included tools can be used in other security scenarios for threat hunting
-and threat investigation. There are three main sub-packages:
+and threat investigation.
 
-- sectools - python security tools to help with data analysis or investigation
-- nbtools  - Jupyter-specific UI tools such as widgets and data display
-- data     - data interfaces specific to Sentinel/Log Analytics
+<img src="https://github.com/microsoft/msticpy/blob/master/docs/source/visualization/_static/Timeline-08.png"
+alt="Timeline" title="Msticpy Timeline Control" width="300" height="200" />
 
-The package is in an early preview mode so there are likely to be bugs and there are several
-areas that are not yet optimized for performance.
+There are three main sub-packages:
+
+- **sectools** - Python security tools to help with data enrichment,
+  analysis or investigation.
+- **nbtools** - Jupyter-specific UI tools such as widgets, plotting and
+  other data display.
+- **data** - data layer and pre-defined queries for Azure Sentinel, MDATP and
+   other data sources.
 
 We welcome feedback, bug reports, suggestions for new features and contributions.
 
@@ -26,7 +31,7 @@ or for the latest dev build
 
 ## Documentation
 
-Full documentation is at [ReadTheDocs](https://msticpy.readthedocs.io/en/latest/overview.html)
+Full documentation is at [ReadTheDocs](https://msticpy.readthedocs.io/en/latest/)
 
 Sample notebooks for many of the modules are in the [docs/notebooks](https://github.com/microsoft/msticpy/blob/master/docs/notebooks) folder and accompanying notebooks.
 
@@ -52,7 +57,7 @@ Output is to a decoded string (for single string input) or a DataFrame (for data
 
 ### iocextract
 
-Uses a set of builtin regular expressions to look for Indicator of Compromise (IoC) patterns.
+Uses a set of built-in regular expressions to look for Indicator of Compromise (IoC) patterns.
 Input can be a single string or a pandas dataframe with one or more columns specified as input.
 
 The following types are built-in:
@@ -62,17 +67,17 @@ The following types are built-in:
 - DNS domain
 - Hashes (MD5, SHA1, SHA256)
 - Windows file paths
-- Linux file paths (this is kind of noisy because a legal linux file path can have almost any character)
+- Linux file paths (this is kind of noisy because a legal Linux file path can have almost any character)
 
 You can modify or add to the regular expressions used at runtime.
 
 Output is a dictionary of matches (for single string input) or a DataFrame (for dataframe input).
 
-[Base64Unpack Notebook](https://github.com/microsoft/msticpy/blob/master/docs/notebooks/IoCExtract.ipynb)
+[IoCExtract Notebook](https://github.com/microsoft/msticpy/blob/master/docs/notebooks/IoCExtract.ipynb)
 
 ### tiproviders
 
-The TILookup class can lookup IoCs across multiple TI providers. builtin
+The TILookup class can lookup IoCs across multiple TI providers. built-in
 providers include AlienVault OTX, IBM XForce, VirusTotal and Azure Sentinel.
 
 The input can be a single IoC observable or a pandas DataFrame containing
@@ -80,7 +85,7 @@ multiple observables. Depending on the provider, you may require an account
 and an API key. Some providers also enforce throttling (especially for free
 tiers), which might affect performing bulk lookups.
 
-For more details see :doc:`TIProviders` and
+For more details see `TIProviders` and
 [TILookup Usage Notebook](https://github.com/microsoft/msticpy/blob/master/docs/notebooks/TIProviders.ipynb)
 
 ### vtlookup
@@ -101,6 +106,11 @@ Support IoC Types:
 ### geoip
 
 Geographic location lookup for IP addresses.
+
+<img src="https://github.com/microsoft/msticpy/blob/PandasMagicExtensions/docs/source/visualization/_static/FoliumMap-01.png"
+  alt="Folium map"
+  title="Plotting Geo IP Location" width="150" height="100" />
+
 This module has two classes for different services:
 
 - GeoLiteLookup - Maxmind Geolite (see <https://www.maxmind.com>)
@@ -118,6 +128,10 @@ while IPStack is an online lookup (API key required).
 This module is intended to be used to summarize large numbers of
 events into clusters of different patterns. High volume repeating
 events can often make it difficult to see unique and interesting items.
+
+<img src="https://github.com/microsoft/msticpy/blob/PandasMagicExtensions/docs/source/data_analysis/_static/EventClustering_2a.png"
+  alt="Clustering"
+  title="Clustering based on command-line variability" width="150" height="200" />
 
 This is an unsupervised learning module implemented using SciKit Learn DBScan.
 
@@ -153,9 +167,9 @@ This is still a work-in-progress.
 
 ### syslog_utils
 
-A series data maniuplation functions to support an investigation of a
-linux host with only syslog logging enabled. This includes functions for collating host
-data, clusting logon events and detecting user sessions containing suspicious activity.
+Module to support an investigation of a linux host with only syslog logging enabled.
+This includes functions for collating host data, clusting logon events and detecting
+user sessions containing suspicious activity.
 
 ### cmd_line
 
@@ -204,14 +218,23 @@ Requires sign-in to Azure Notebooks
 <img src="https://notebooks.azure.com/launch.png" />
 </a>
 
-## More Notebook Examples
+## More Notebooks
+
+- [Account Explorer](https://github.com/Azure/Azure-Sentinel-Notebooks/blob/master/Entity%20Explorer%20-%20Account.ipynb)
+- [Domain and URL Explorer](https://github.com/Azure/Azure-Sentinel-Notebooks/blob/master/Entity%20Explorer%20-%20Domain%20%26%20URL.ipynb)
+- [IP Explorer](https://github.com/Azure/Azure-Sentinel-Notebooks/blob/master/Entity%20Explorer%20-%20IP%20Address.ipynb)
+- [Linux Host Explorer](https://github.com/Azure/Azure-Sentinel-Notebooks/blob/master/Entity%20Explorer%20-%20Linux%20Host.ipynb)
+- [Windows Host Explorer](https://github.com/Azure/Azure-Sentinel-Notebooks/blob/master/Entity%20Explorer%20-%20Windows%20Host.ipynb)
+
+View directly on GitHub or copy and paste the link into [nbviewer.org](https://nbviewer.jupyter.org/)
+
+## Notebook examples with saved data
 
 See the following notebooks for more examples of the use of this package in practice:
 
-- Windows Alert Investigation in [github](https://github.com/Azure/Azure-Sentinel/blob/master/Notebooks/Sample-Notebooks/Example%20-%20Guided%20Investigation%20-%20Process-Alerts.ipynb) or [NbViewer](https://nbviewer.jupyter.org/github/Azure/Azure-Sentinel/blob/master/Notebooks/Sample-Notebooks/Example%20-%20Guided%20Investigation%20-%20Process-Alerts.ipynb)
-- Windows Host Explorer in [github](https://github.com/Azure/Azure-Sentinel/blob/master/Notebooks/Sample-Notebooks/Example%20-%20Guided%20Hunting%20-%20Windows-Host-Explorer.ipynb) or [NbViewer](https://nbviewer.jupyter.org/github/Azure/Azure-Sentinel/blob/master/Notebooks/Sample-Notebooks/Example%20-%20Guided%20Hunting%20-%20Windows-Host-Explorer.ipynb)
-- Office 365 Exploration in [github](https://github.com/Azure/Azure-Sentinel/blob/master/Notebooks/Sample-Notebooks/Example%20-%20Guided%20Hunting%20-%20Office365-Exploring.ipynb) or [NbViewer](https://nbviewer.jupyter.org/github.com/Azure/Azure-Sentinel/blob/master/Notebooks/Sample-Notebooks/Example%20-%20Guided%20Hunting%20-%20Office365-Exploring.ipynb)
-- Cross-Network Hunting in [github](https://github.com/Azure/Azure-Sentinel/blob/master/Notebooks/Sample-Notebooks/Example%20-%20Guided%20Hunting%20-%20Linux-Windows-Office.ipynb) or [NbViewer](https://nbviewer.jupyter.org/github/Azure/Azure-Sentinel/blob/master/Notebooks/Sample-Notebooks/Example%20-%20Guided%20Hunting%20-%20Linux-Windows-Office.ipynb)
+- Windows Alert Investigation in [github](https://github.com/Azure/Azure-Sentinel-Notebooks/blob/master/Sample-Notebooks/Example%20-%20Guided%20Investigation%20-%20Process-Alerts.ipynb) or [NbViewer](https://nbviewer.jupyter.org/github/Azure/Azure-Sentinel-Notebooks/blob/master/Sample-Notebooks/Example%20-%20Guided%20Investigation%20-%20Process-Alerts.ipynb)
+- Office 365 Exploration in [github](https://github.com/Azure/Azure-Sentinel-Notebooks/blob/master/Sample-Notebooks/Example%20-%20Guided%20Hunting%20-%20Office365-Exploring.ipynb) or [NbViewer](https://nbviewer.jupyter.org/github/Azure/Azure-Sentinel-Notebooks/blob/master/Sample-Notebooks/Example%20-%20Guided%20Hunting%20-%20Office365-Exploring.ipynb)
+- Cross-Network Hunting in [github](https://github.com/Azure/Azure-Sentinel-Notebooks/blob/master/Sample-Notebooks/Example%20-%20Step-by-Step%20Linux-Windows-Office%20Investigation.ipynb) or [NbViewer](https://nbviewer.jupyter.org/github/Azure/Azure-Sentinel-Notebooks/blob/master/Sample-Notebooks/Example%20-%20Step-by-Step%20Linux-Windows-Office%20Investigation.ipynb)
 
 ## To-Do Items
 

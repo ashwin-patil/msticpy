@@ -52,6 +52,13 @@ msticpy.data.data\_providers module
     :undoc-members:
     :show-inheritance:
 
+msticpy.data.azure\_data module
+-------------------------------
+.. automodule:: msticpy.data.azure_data
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 msticpy.data.data\_query\_reader module
 ---------------------------------------
 .. automodule:: msticpy.data.data_query_reader
@@ -94,45 +101,53 @@ msticpy.data.drivers.security\_graph\_driver module
     :undoc-members:
     :show-inheritance:
 
-msticpy.nbtools.kql module
---------------------------
-
-.. automodule:: msticpy.nbtools.kql
+msticpy.data.drivers.odata\_driver module
+---------------------------------------------------
+.. automodule:: msticpy.data.drivers.odata_driver
     :members:
     :undoc-members:
     :show-inheritance:
+
+msticpy.data.drivers.mdatp\_driver module
+---------------------------------------------------
+.. automodule:: msticpy.data.drivers.mdatp_driver
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+msticpy.nbtools.kql module
+--------------------------
+
+.. deprecated:: version 0.2.0
+   Use :py:class:`msticpy.data.QueryProvider` instead.
+
 
 msticpy.nbtools.query\_builtin\_queries module
 ----------------------------------------------
 
-.. automodule:: msticpy.nbtools.query_builtin_queries
-    :members:
-    :undoc-members:
-    :show-inheritance:
+.. deprecated:: version 0.2.0
+   Use :py:class:`msticpy.data.QueryProvider` instead.
+
 
 msticpy.nbtools.query\_defns module
 -----------------------------------
 
-.. automodule:: msticpy.nbtools.query_defns
-    :members:
-    :undoc-members:
-    :show-inheritance:
+.. deprecated:: version 0.2.0
+   Use :py:class:`msticpy.data.QueryProvider` instead.
+
 
 msticpy.nbtools.query\_mgr module
 ---------------------------------
 
-.. automodule:: msticpy.nbtools.query_mgr
-    :members:
-    :undoc-members:
-    :show-inheritance:
+.. deprecated:: version 0.2.0
+   Use :py:class:`msticpy.data.QueryProvider` instead.
 
 msticpy.nbtools.query\_schema module
 ------------------------------------
 
-.. automodule:: msticpy.nbtools.query_schema
-    :members:
-    :undoc-members:
-    :show-inheritance:
+.. deprecated:: version 0.2.0
+   Use :py:class:`msticpy.data.QueryProvider` instead.
+
 
 Module contents
 ---------------

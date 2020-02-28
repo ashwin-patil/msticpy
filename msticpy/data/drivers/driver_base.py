@@ -6,7 +6,7 @@
 """Data driver base class."""
 import abc
 from abc import ABC
-from typing import Tuple, Any, Union, Dict
+from typing import Tuple, Any, Union, Dict, Optional
 
 import pandas as pd
 
@@ -77,13 +77,13 @@ class DriverBase(ABC):
         return {}
 
     @abc.abstractmethod
-    def connect(self, connection_str: str, **kwargs):
+    def connect(self, connection_str: Optional[str] = None, **kwargs):
         """
         Connect to data source.
 
         Parameters
         ----------
-        connection_string : str
+        connection_str : Optional[str]
             Connect to a data source
 
         """
@@ -108,7 +108,7 @@ class DriverBase(ABC):
         """
 
     @abc.abstractmethod
-    def query_with_results(self, query: str) -> Tuple[pd.DataFrame, Any]:
+    def query_with_results(self, query: str, **kwargs) -> Tuple[pd.DataFrame, Any]:
         """
         Execute query string and return DataFrame plus native results.
 

@@ -4,23 +4,26 @@
 # license information.
 # --------------------------------------------------------------------------
 """TIProviders test class."""
-import unittest
-from unittest import mock
+import io
 import os
-from pathlib import Path
 import random
 import string
-from typing import Union, Any, Tuple
+import unittest
+import warnings
+from contextlib import redirect_stdout
+from pathlib import Path
+from typing import Any, Tuple, Union
+from unittest import mock
 
 from ..msticpy.nbtools import pkg_config
 from ..msticpy.sectools.iocextract import IoCExtract
 from ..msticpy.sectools.tilookup import TILookup
 from ..msticpy.sectools.tiproviders import (
-    TIProviderSettings,
+    HttpProvider,
+    LookupResult,
+    ProviderSettings,
     get_provider_settings,
     preprocess_observable,
-    LookupResult,
-    HttpProvider,
 )
 
 _test_data_folders = [
@@ -222,13 +225,18 @@ class TestTIProviders(unittest.TestCase):
         test_config1 = Path(_TEST_DATA).joinpath(pkg_config._CONFIG_FILE)
         os.environ[pkg_config._CONFIG_ENV_VAR] = str(test_config1)
 
-        pkg_config.refresh_config()
-        return TILookup()
+        with warnings.catch_warnings():
+            # We want to ignore warnings from missing config
+            warnings.simplefilter("ignore", category=UserWarning)
+
+            pkg_config.refresh_config()
+            return TILookup()
 
     def test_ti_config_and_load(self):
         self.load_ti_lookup()
 
-        ti_settings = get_provider_settings()
+        with self.assertWarns(UserWarning):
+            ti_settings = get_provider_settings()
 
         self.assertIsInstance(ti_settings, dict)
         self.assertGreaterEqual(len(ti_settings), 4)
@@ -241,6 +249,13 @@ class TestTIProviders(unittest.TestCase):
         # should have 2 succesfully loaded providers
         self.assertGreaterEqual(len(ti_lookup.loaded_providers), 3)
         self.assertGreaterEqual(len(ti_lookup.provider_status), 3)
+
+    def test_tilookup_utils(self):
+        av_provs = self.ti_lookup.available_providers
+        self.assertGreaterEqual(len(av_provs), 1)
+        self.ti_lookup.provider_usage()
+        self.ti_lookup.list_available_providers(show_query_types=True)
+        self.ti_lookup.reload_providers()
 
     def test_xforce(self):
         self.exercise_provider("XForce")
@@ -298,6 +313,15 @@ class TestTIProviders(unittest.TestCase):
                 self.assertIsNotNone(lu_result.details)
                 self.assertIsNotNone(lu_result.raw_result)
                 self.assertIsNotNone(lu_result.reference)
+                # exercise summary functions of Lookup class
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    lu_result.summary
+                self.assertIsNotNone(output.getvalue())
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    lu_result.raw_result_fmtd
+                self.assertIsNotNone(output.getvalue())
 
     def test_opr_single_lookup(self):
         ti_lookup = self.ti_lookup
@@ -374,12 +398,11 @@ class TestTIProviders(unittest.TestCase):
     def test_tor_exit_nodes(self):
         ti_lookup = self.ti_lookup
 
-        tor_nodes = [
-            "192.42.116.17",
-            "163.172.215.183",
-            "185.225.208.117",
-            "176.10.99.200",
-        ]
+        # we can't use a fixed list since this changes all the time
+        # so take a sample from the current list
+        tor_prov = ti_lookup.loaded_providers["Tor"]
+        tor_nodes = random.sample(tor_prov._nodelist.keys(), 4)
+
         other_ips = [
             "104.117.0.237",
             "13.107.4.50",
@@ -412,3 +435,16 @@ class TestTIProviders(unittest.TestCase):
         self.assertEqual(len(all_ips), len(tor_results_df))
         self.assertEqual(len(tor_results_df[tor_results_df["Severity"] > 0]), 4)
         self.assertEqual(len(tor_results_df[tor_results_df["Severity"] == 0]), 5)
+
+    def test_check_ioc_type(self):
+        provider = self.ti_lookup.loaded_providers["OTX"]
+        lu_result = provider._check_ioc_type(ioc="a.b.c.d", ioc_type="ipv4")
+        self.assertEqual(lu_result.status, 2)
+        lu_result = provider._check_ioc_type(ioc="a.b.c.d", ioc_type="ipv6")
+        self.assertEqual(lu_result.status, 2)
+        lu_result = provider._check_ioc_type(ioc="url", ioc_type="ipv4")
+        self.assertEqual(lu_result.status, 2)
+        lu_result = provider._check_ioc_type(ioc="123", ioc_type="dns")
+        self.assertEqual(lu_result.status, 2)
+        lu_result = provider._check_ioc_type(ioc="123456", ioc_type="file_hash")
+        self.assertEqual(lu_result.status, 2)

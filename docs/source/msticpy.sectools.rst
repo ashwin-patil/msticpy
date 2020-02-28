@@ -60,8 +60,24 @@ msticpy.sectools.outliers module
     :undoc-members:
     :show-inheritance:
 
+msticpy.sectools.process\_tree\_utils module
+--------------------------------------------
+
+.. automodule:: msticpy.sectools.process_tree_utils
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+msticpy.sectools.provider\_settings module
+------------------------------------------
+
+.. automodule:: msticpy.sectools.provider_settings
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 msticpy.sectools.syslog_utils module
-----------------------------------
+------------------------------------
 
 .. automodule:: msticpy.sectools.syslog_utils
     :members:
@@ -81,14 +97,6 @@ msticpy.sectools.tiproviders.ti\_provider\_base module
 ------------------------------------------------------
 
 .. automodule:: msticpy.sectools.tiproviders.ti_provider_base
-    :members:
-    :undoc-members:
-    :show-inheritance:
-
-msticpy.sectools.tiproviders.ti\_provider\_settings module
-----------------------------------------------------------
-
-.. automodule:: msticpy.sectools.tiproviders.ti_provider_settings
     :members:
     :undoc-members:
     :show-inheritance:

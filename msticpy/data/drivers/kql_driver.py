@@ -4,13 +4,13 @@
 # license information.
 # --------------------------------------------------------------------------
 """KQL Driver class."""
-from typing import Tuple, Union, Any, Dict
+from typing import Tuple, Union, Any, Dict, Optional
 
 import pandas as pd
 from IPython import get_ipython
 
 from .driver_base import DriverBase
-from ...nbtools.utility import export
+from ...nbtools.utility import export, MsticpyException
 from ..._version import VERSION
 
 __version__ = VERSION
@@ -46,16 +46,18 @@ class KqlDriver(DriverBase):
 
         self._schema: Dict[str, Any] = {}
 
-    def connect(self, connection_str: str, **kwargs):
+    def connect(self, connection_str: Optional[str] = None, **kwargs):
         """
         Connect to data source.
 
         Parameters
         ----------
-        connection_string : str
+        connection_str : str
             Connect to a data source
 
         """
+        if not connection_str:
+            raise MsticpyException("No connection string supplied.")
         self.current_connection = connection_str
         result = self._ip.run_cell_magic("kql", line="", cell=connection_str)
         self._connected = True
@@ -95,7 +97,7 @@ class KqlDriver(DriverBase):
         return data if data is not None else result
 
     # pylint: disable=too-many-branches
-    def query_with_results(self, query: str) -> Tuple[pd.DataFrame, Any]:
+    def query_with_results(self, query: str, **kwargs) -> Tuple[pd.DataFrame, Any]:
         """
         Execute query string and return DataFrame of results.
 

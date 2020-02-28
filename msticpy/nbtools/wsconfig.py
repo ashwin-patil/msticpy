@@ -82,6 +82,10 @@ class WorkspaceConfig:
         # In operator overload
         return key == "Type" or key in self._config or key in self.__dict__
 
+    def __repr__(self):
+        """Return contents of current config."""
+        return self._config.__repr__()
+
     @property
     def config_loaded(self) -> bool:
         """
@@ -108,10 +112,19 @@ class WorkspaceConfig:
             Connection string
 
         """
-        con_str = 'loganalytics://code().tenant("{ten_id}").workspace("{ws_id}")'
-        return con_str.format(
-            ten_id=self[self.CONF_TENANT_ID_KEY], ws_id=self[self.CONF_WS_ID_KEY]
-        )
+        ten_id = self._config.get(self.CONF_TENANT_ID_KEY, None)
+        ws_id = self._config.get(self.CONF_WS_ID_KEY, None)
+        if not ten_id:
+            raise KeyError(
+                f"Configuration setting for {self.CONF_TENANT_ID_KEY} "
+                + "could not be found."
+            )
+        if not ws_id:
+            raise KeyError(
+                f"Configuration setting for {self.CONF_WS_ID_KEY} "
+                + "could not be found."
+            )
+        return f"loganalytics://code().tenant('{ten_id}').workspace('{ws_id}')"
 
     @classmethod
     def _read_config_values(cls, file_path: str) -> Dict[str, str]:
@@ -121,6 +134,28 @@ class WorkspaceConfig:
                 json_config = json.load(json_file)
                 return json_config
         return {}
+
+    @classmethod
+    def list_workspaces(cls) -> Dict:
+        """
+        Return list of available workspaces.
+
+        Returns
+        -------
+        Dict
+            Dictionary of workspaces with workspace and tenantIds.
+
+        """
+        ws_settings = pkg_config.settings.get("AzureSentinel", {}).get("Workspaces")
+        if not ws_settings:
+            return {}
+        return {
+            ws_name: {
+                cls.PKG_CONF_WS_KEY: ws.get(cls.PKG_CONF_WS_KEY),
+                cls.PKG_CONF_TENANT_KEY: ws.get(cls.PKG_CONF_TENANT_KEY),
+            }
+            for ws_name, ws in ws_settings.items()
+        }
 
     def _read_pkg_config_values(self, workspace_name: str = None):
         as_settings = pkg_config.settings.get("AzureSentinel")
